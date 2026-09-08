@@ -1,0 +1,22 @@
+code           type        d method                 got    seconds  note
+[[27,6,6]]     non-CSS     6 BZDistMW                 6      0.454  
+[[27,6,6]]     non-CSS     6 pySATDist                6      2.565  
+[[27,6,6]]     non-CSS     6 QDistEvol                6      0.945  
+[[28,6,6]]     non-CSS     6 BZDistMW                 6      0.574  
+[[28,6,6]]     non-CSS     6 pySATDist                6      2.441  
+[[28,6,6]]     non-CSS     6 QDistEvol                6      0.989  
+[[29,6,7]]     non-CSS     7 BZDistMW                 7      2.968  
+[[29,6,7]]     non-CSS     7 pySATDist                7     17.260  
+[[29,6,7]]     non-CSS     7 QDistEvol                7      1.053  
+[[30,9,6]]     non-CSS     6 BZDistMW                 6      1.387  
+[[30,9,6]]     non-CSS     6 pySATDist                6      4.830  
+[[30,9,6]]     non-CSS     6 QDistEvol                6      1.128  
+[[31,9,6]]     non-CSS     6 BZDistMW                 6      1.581  
+[[31,9,6]]     non-CSS     6 pySATDist                6      7.664  
+[[31,9,6]]     non-CSS     6 QDistEvol                6      1.008  
+[[32,5,8]]     non-CSS     8 BZDistMW                 8     17.908  
+[[32,5,8]]     non-CSS     8 pySATDist               -1    120.000  timeout >120s
+[[32,5,8]]     non-CSS     8 QDistEvol                8      1.113  
+[[33,7,8]]     non-CSS     8 BZDistMW                 8     35.573  
+[[33,7,8]]     non-CSS     8 pySATDist               -1    120.000  timeout >120s
+[[33,7,8]]     non-CSS     8 QDistEvol                8      1.365  
