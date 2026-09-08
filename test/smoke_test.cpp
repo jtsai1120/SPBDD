@@ -1,100 +1,148 @@
 // ===========================================================================
-//  smoke_test -- proves the build reaches CUDD, and that the specific CUDD
-//  behaviours this library is going to rely on actually hold.
+//  smoke_test -- proves the build reaches BuDDy, and that the specific BuDDy
+//  behaviours this library relies on actually hold.
 //
-//  It talks to CUDD directly and deliberately keeps doing so once the wrapper
-//  in spbdd/bdd.hpp exists: when something breaks, this test is the one that
+//  It talks to BuDDy directly and deliberately keeps doing so alongside the
+//  wrapper in spbdd/bdd.hpp: when something breaks, this test is the one that
 //  says whether the problem is ours or the package's.
 // ===========================================================================
 
-// cudd.h uses size_t and FILE but includes neither header itself, so these two
-// lines are load-bearing and must come first.
-#include <cstddef>
-#include <cstdio>
+#include <bdd.h>
 
-#include <cudd.h>
+// BuDDy's header, compiled as C++, redirects part of its C API to overloads
+// returning objects of its own bdd class. This test wants the plain C API, the
+// same one the library is written against.
+#undef bddtrue
+#undef bddfalse
+#undef bdd_init
+#undef bdd_ithvar
+#undef bdd_nithvar
+#undef bdd_makeset
+#undef bdd_ibuildcube
+#undef bdd_anodecount
+extern "C" const BDD bddtrue;
+extern "C" const BDD bddfalse;
 
 #include "check.hpp"
 
+namespace {
+
+BDD claim(BDD r)
+{
+    bdd_addref(r);
+    return r;
+}
+
+void quiet_gbc(int, bddGbcStat *) {}
+
+} // namespace
+
 int main()
 {
-    DdManager *m = Cudd_Init(0, 0, CUDD_UNIQUE_SLOTS, CUDD_CACHE_SLOTS, 0);
-    if (!m) {
-        std::printf("Cudd_Init failed\n");
+    if (bdd_init(100000, 10000) < 0) {
+        std::printf("bdd_init failed\n");
         return 1;
     }
+    bdd_gbc_hook(quiet_gbc);
 
     // --- variables ---------------------------------------------------------
-    // Four boolean variables: two qubits' worth of x0 z0 x1 z1. CUDD creates a
-    // variable the first time it is asked for, so there is no "declare" step.
-    std::printf("variables\n");
+    // Unlike CUDD, BuDDy needs its variables declared up front; asking for one
+    // beyond the declared count is an error rather than a request to grow.
+    SECTION("variables");
     const int NV = 4;
-    DdNode   *v[NV];
-    for (int i = 0; i < NV; ++i) {
-        v[i] = Cudd_bddIthVar(m, i);
-        Cudd_Ref(v[i]);
-    }
-    CHECK(Cudd_ReadSize(m) == NV);
-    CHECK(Cudd_NodeReadIndex(v[2]) == 2);
+    bdd_setvarnum(NV);
+    CHECK(bdd_varnum() == NV);
+    CHECK(bdd_var(bdd_ithvar(2)) == 2);
 
     // --- boolean algebra and canonicity ------------------------------------
     // Two different ways of building the same function must land on the same
-    // node. Everything downstream (set equality as a pointer compare) rests on
-    // this, so it is worth asserting once rather than assuming.
-    std::printf("boolean algebra\n");
-    DdNode *f = Cudd_bddAnd(m, v[0], v[1]);
-    Cudd_Ref(f);
-    DdNode *g = Cudd_bddIte(m, v[0], v[1], Cudd_ReadLogicZero(m));
-    Cudd_Ref(g);
+    // node. Everything downstream (set equality as an integer compare) rests
+    // on this, so it is worth asserting once rather than assuming.
+    SECTION("boolean algebra");
+    BDD x0 = claim(bdd_ithvar(0));
+    BDD x1 = claim(bdd_ithvar(1));
+    BDD f  = claim(bdd_and(x0, x1));
+    BDD g  = claim(bdd_ite(x0, x1, bddfalse));
     CHECK(f == g);
-    CHECK(Cudd_DagSize(f) == 3);
-    CHECK(Cudd_CountMinterm(m, f, NV) == 4.0);   // x0 x1 fixed, x2 x3 free
+    CHECK(bdd_nodecount(f) == 2);            // internal nodes only; no terminal
+    CHECK(bdd_satcount(f) == 4.0);           // over all four declared variables
 
-    // --- complement edges --------------------------------------------------
-    // Negation is a bit flipped in the pointer, not a new node. Any traversal
-    // we write has to resolve this or it will read the wrong cofactors.
-    std::printf("complement edges\n");
-    DdNode *nf = Cudd_Not(f);
-    CHECK(Cudd_Regular(nf) == Cudd_Regular(f));
-    CHECK(Cudd_IsComplement(nf) != Cudd_IsComplement(f));
+    // --- no complement edges -----------------------------------------------
+    // BuDDy stores negation as a distinct node rather than a mark on an edge,
+    // so a traversal reads the plain Shannon decomposition with nothing to
+    // resolve -- which is why Bdd::low/high have no mark handling.
+    SECTION("no complement edges");
+    BDD nf = claim(bdd_not(f));
+    CHECK(nf != f);
+    CHECK(bdd_high(f) == x1);
+    CHECK(bdd_low(f) == bddfalse);
 
     // --- quantification ----------------------------------------------------
-    // A cube is itself a BDD (the conjunction of the variables to remove), and
-    // it needs its own reference like anything else.
-    std::printf("quantification\n");
-    DdNode *cube = v[1];
-    Cudd_Ref(cube);
-    DdNode *ex = Cudd_bddExistAbstract(m, f, cube);
-    Cudd_Ref(ex);
-    CHECK(ex == v[0]);                            // exists x1 . (x0 & x1) == x0
+    // A varset is itself a BDD, and it needs its own reference like anything
+    // else.
+    SECTION("quantification");
+    BDD cube = claim(bdd_ithvar(1));
+    BDD ex   = claim(bdd_exist(f, cube));
+    CHECK(ex == x0);                          // exists x1 . (x0 & x1) == x0
+
+    // --- simultaneous substitution -----------------------------------------
+    // A fresh pair is the identity on every variable, and veccompose reads
+    // every right-hand side in the original function. Applying
+    // {x0 := x0^x1, x1 := x0} to (x0 & x1) gives x0 & !x1; one assignment at a
+    // time would collapse it to false, so this distinguishes the two.
+    SECTION("simultaneous substitution");
+    bddPair *pair  = bdd_newpair();
+    BDD      xor01 = claim(bdd_xor(x0, x1));
+    bdd_setbddpair(pair, 0, xor01);
+    bdd_setbddpair(pair, 1, x0);
+    BDD sub  = claim(bdd_veccompose(f, pair));
+    BDD want = claim(bdd_and(x0, bdd_nithvar(1)));
+    CHECK(sub == want);
+    CHECK(sub != bddfalse);
+
+    // A renaming that reverses the order of two variables has to come out as a
+    // transposition rather than collapsing them, which is what swap() needs.
+    bddPair *swap = bdd_newpair();
+    bdd_setpair(swap, 0, 1);
+    bdd_setpair(swap, 1, 0);
+    BDD swapped  = claim(bdd_replace(f, swap));
+    CHECK(swapped == f);                       // x0 & x1 is symmetric
+    BDD asym     = claim(bdd_and(x0, bdd_nithvar(1)));
+    BDD asym_sw  = claim(bdd_replace(asym, swap));
+    BDD asym_want = claim(bdd_and(x1, bdd_nithvar(0)));
+    CHECK(asym_sw == asym_want);
 
     // --- reordering --------------------------------------------------------
-    // Sifting rewrites levels, never variable indices, and leaves referenced
-    // nodes valid. Code that indexes by variable number therefore survives it;
-    // code that assumes level == index does not, which is what this catches.
-    std::printf("reordering\n");
-    const double minterms_before = Cudd_CountMinterm(m, f, NV);
-    Cudd_ReduceHeap(m, CUDD_REORDER_SIFT, 0);
-    CHECK(Cudd_CountMinterm(m, f, NV) == minterms_before);
-    CHECK(Cudd_NodeReadIndex(v[0]) == 0);
-    DdNode *f2 = Cudd_bddAnd(m, v[0], v[1]);
-    Cudd_Ref(f2);
+    // Sifting rewrites levels, never variable numbers, and leaves referenced
+    // nodes valid. BuDDy needs variable blocks declared before it will move
+    // anything at all, which is why the Manager declares them at start-up.
+    SECTION("reordering");
+    const double minterms_before = bdd_satcount(f);
+    bdd_varblockall();
+    bdd_reorder(BDD_REORDER_SIFT);
+    CHECK(bdd_satcount(f) == minterms_before);
+    CHECK(bdd_var(bdd_ithvar(0)) == 0);
+    BDD f2 = claim(bdd_and(bdd_ithvar(0), bdd_ithvar(1)));
     CHECK(f2 == f);
 
     // --- reference counting ------------------------------------------------
-    // Hand every reference back, then let CUDD audit us. A non-zero count here
-    // is a leak, and it is the check the Bdd RAII wrapper will have to keep
-    // passing once it exists.
-    std::printf("reference counting\n");
-    Cudd_RecursiveDeref(m, f2);
-    Cudd_RecursiveDeref(m, ex);
-    Cudd_RecursiveDeref(m, cube);
-    Cudd_RecursiveDeref(m, g);
-    Cudd_RecursiveDeref(m, f);
-    for (int i = 0; i < NV; ++i) Cudd_RecursiveDeref(m, v[i]);
-    CHECK(Cudd_CheckZeroRef(m) == 0);
+    // Hand every reference back, then let a collection show the nodes go away.
+    // BuDDy has no per-node audit like Cudd_CheckZeroRef, so this is a live
+    // count rather than a reference check -- the same substitute Manager uses.
+    SECTION("reference counting");
+    bdd_gbc();
+    const int live_while_held = bdd_getnodenum();
 
-    Cudd_Quit(m);
+    bdd_delref(asym_want); bdd_delref(asym_sw); bdd_delref(asym);
+    bdd_delref(swapped);   bdd_delref(want);    bdd_delref(sub);
+    bdd_delref(xor01);     bdd_delref(ex);      bdd_delref(cube);
+    bdd_delref(nf);        bdd_delref(f2);      bdd_delref(g);
+    bdd_delref(f);         bdd_delref(x1);      bdd_delref(x0);
+    bdd_freepair(pair);    bdd_freepair(swap);
 
+    bdd_gbc();
+    CHECK(bdd_getnodenum() < live_while_held);
+
+    bdd_done();
     return REPORT("smoke_test");
 }

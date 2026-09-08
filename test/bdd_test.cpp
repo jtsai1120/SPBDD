@@ -90,14 +90,17 @@ int main()
         CHECK(mgr.level_to_var(mgr.var_to_level(0)) == 0);
         (void)level0;
 
-        SECTION("managers are separate");
-        Manager other(4);
-        CHECK_THROWS(f & other.literal(0), std::logic_error);
-        CHECK_THROWS(f.compose({{0, other.literal(0)}}), std::logic_error);
+        SECTION("there is only one manager");
+        // BuDDy keeps its tables in process-wide globals, so a second Manager
+        // cannot exist -- which is also why the "operands from different
+        // managers" checks that belong here have nothing to run against.
+        CHECK(Manager::alive());
+        CHECK_THROWS(Manager(4), std::runtime_error);
     }
 
     SECTION("reference counting");
-    // Every Bdd above has now been destroyed, so CUDD should hold nothing.
+    // Every Bdd above has now been destroyed, so nothing should be left
+    // referenced beyond the variable table itself.
     CHECK(mgr.check_zero_ref() == 0);
 
     return REPORT("bdd_test");

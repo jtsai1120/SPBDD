@@ -37,8 +37,9 @@ struct GateSpec {
 
 int main()
 {
-    const int  n = 3;
-    PauliSpace sp(n);
+    // Only one PauliSpace may be alive at a time on this backend, so each
+    // section below builds its own rather than sharing one across main.
+    const int n = 3;
 
     // Qubit 2 is deliberately left out of every gate, so the tests also see
     // that untouched qubits are untouched.
@@ -59,6 +60,7 @@ int main()
 
     SECTION("generator table, element by element (n=3)");
     {
+        PauliSpace sp(n);
         // The whole universe at once: 64 operators, every one of them checked.
         const Strings  all     = spbdd_ref::universe(n);
         const PauliSet all_set = sp.all();
@@ -81,6 +83,7 @@ int main()
 
     SECTION("named images");
     {
+        PauliSpace sp(n);
         // The table above spelled out; these read as the physics.
         CHECK(sp.from("XII").h(0) == sp.from("ZII"));
         CHECK(sp.from("ZII").h(0) == sp.from("XII"));
@@ -104,6 +107,7 @@ int main()
 
     SECTION("bijection and involution");
     {
+        PauliSpace sp(n);
         const PauliSet b = sp.from_list({"XIZ", "IYI", "ZZZ", "IIX"});
         for (const GateSpec &g : gates) {
             CHECK_AT(g.apply(b).size() == b.size(), (std::string(g.name) + " preserves cardinality").c_str());
@@ -113,6 +117,7 @@ int main()
 
     SECTION("simultaneity");
     {
+        PauliSpace sp(n);
         // cx moves x forward and z backward at once. Doing the two assignments
         // one after the other would send X_c to X_c X_t and then pick the new
         // x_t up again; the check that catches it is simply that cx undoes
@@ -126,6 +131,7 @@ int main()
 
     SECTION("commutation is preserved");
     {
+        PauliSpace sp(n);
         // A symplectic map sends the set commuting with P to the set commuting
         // with the image of P, which is why a stabilizer group stays one.
         for (const GateSpec &g : gates) {
@@ -178,6 +184,7 @@ int main()
 
     SECTION("argument checking");
     {
+        PauliSpace sp(n);
         CHECK_THROWS(sp.all().h(9), std::out_of_range);
         CHECK_THROWS(sp.all().x(-1), std::out_of_range);
         CHECK_THROWS(sp.all().cx(0, 0), std::invalid_argument);

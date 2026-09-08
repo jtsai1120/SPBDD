@@ -16,7 +16,7 @@
 using namespace spbdd;
 using spbdd_ref::Strings;
 
-int main()
+static void checks_on_three_qubits()
 {
     // Two arbitrary but overlapping subsets of the 64 operators on 3 qubits.
     PauliSpace sp(3);
@@ -51,8 +51,10 @@ int main()
         acc ^= b;
         CHECK(acc == ((((a | b) & b) - a) ^ b));
 
-        PauliSpace other(3);
-        CHECK_THROWS(a | other.all(), std::logic_error);
+        // BuDDy keeps its tables in process-wide globals, so a second space
+        // cannot be built at all. That takes the place of the "operands from
+        // different spaces" check, which has nothing to run against here.
+        CHECK_THROWS(PauliSpace(3), std::runtime_error);
     }
 
     SECTION("predicates");
@@ -77,17 +79,8 @@ int main()
         CHECK(a.node_count() > 1);
     }
 
-    SECTION("min_weight");
+    SECTION("min_weight vs enumeration");
     {
-        PauliSpace s6(6);
-        CHECK(s6.empty().min_weight() == -1);
-        CHECK(s6.identity().min_weight() == 0);
-        CHECK(s6.all().min_weight() == 0);
-        CHECK(s6.from("XXIIII").min_weight() == 2);
-        CHECK(s6.from_list({"XXXXXI", "IIZZII"}).min_weight() == 2);
-        CHECK(s6.weight_exactly(4).min_weight() == 4);
-        CHECK(s6.weight_exactly(6).min_weight() == 6);
-
         // against the definition: the lightest element found by enumeration
         for (const std::string p : {"IXI", "ZZZ", "XYZ"}) {
             const PauliSet s    = sp.commuting_with(p) - sp.identity();
@@ -169,6 +162,29 @@ int main()
         CHECK_THROWS(sp.all().measure_z(9), std::out_of_range);
         CHECK_THROWS(sp.all().measure("XX"), std::invalid_argument);
     }
+}
+
+// Six qubits, where min_weight has room to bisect. A separate function because
+// only one PauliSpace may be alive at a time on this backend.
+static void checks_on_six_qubits()
+{
+    SECTION("min_weight");
+    {
+        PauliSpace s6(6);
+        CHECK(s6.empty().min_weight() == -1);
+        CHECK(s6.identity().min_weight() == 0);
+        CHECK(s6.all().min_weight() == 0);
+        CHECK(s6.from("XXIIII").min_weight() == 2);
+        CHECK(s6.from_list({"XXXXXI", "IIZZII"}).min_weight() == 2);
+        CHECK(s6.weight_exactly(4).min_weight() == 4);
+        CHECK(s6.weight_exactly(6).min_weight() == 6);
+    }
+}
+
+int main()
+{
+    checks_on_three_qubits();
+    checks_on_six_qubits();
 
     SECTION("enumeration");
     {

@@ -79,30 +79,42 @@ bool brute_has_pair(const StabilizerCode &code, const Strings &errors)
 
 int main()
 {
-    SECTION("the symplectic basis");
+    // Only one PauliSpace may be alive at a time on this backend, so the three
+    // codes are examined one after another rather than side by side.
+    SECTION("the symplectic basis: Steane [[7,1,3]]");
     {
-        PauliSpace s7(7), s5(5), s3(3);
+        PauliSpace           s7(7);
         const StabilizerCode a(s7, steane);
-        const StabilizerCode b(s5, five_qubit);
-        const StabilizerCode c(s3, bit_flip);
 
         check_basis(a, "Steane [[7,1,3]]");
-        check_basis(b, "five-qubit [[5,1,3]]");
-        check_basis(c, "bit-flip [[3,1,1]]");
-
         CHECK(a.n_stabilizers() == 6 && a.n_logical() == 1);
-        CHECK(b.n_stabilizers() == 4 && b.n_logical() == 1);
-        CHECK(c.n_stabilizers() == 2 && c.n_logical() == 1);
-
         CHECK(a.group().size() == 64.0 && a.normalizer().size() == 256.0);
         CHECK(a.distance() == 3);
-        CHECK(b.distance() == 3);
-        CHECK(c.distance() == 1);   // the bit-flip code corrects no phase error
 
         // dependent generators are absorbed rather than rejected
         std::vector<std::string> repeated = steane;
         repeated.push_back(steane[0]);
         CHECK(StabilizerCode(s7, repeated).n_stabilizers() == 6);
+    }
+
+    SECTION("the symplectic basis: five-qubit [[5,1,3]]");
+    {
+        PauliSpace           s5(5);
+        const StabilizerCode b(s5, five_qubit);
+
+        check_basis(b, "five-qubit [[5,1,3]]");
+        CHECK(b.n_stabilizers() == 4 && b.n_logical() == 1);
+        CHECK(b.distance() == 3);
+    }
+
+    SECTION("the symplectic basis: bit-flip [[3,1,1]]");
+    {
+        PauliSpace           s3(3);
+        const StabilizerCode c(s3, bit_flip);
+
+        check_basis(c, "bit-flip [[3,1,1]]");
+        CHECK(c.n_stabilizers() == 2 && c.n_logical() == 1);
+        CHECK(c.distance() == 1);   // the bit-flip code corrects no phase error
 
         CHECK_THROWS(StabilizerCode(s3, {"XII", "ZII"}), std::invalid_argument);
         CHECK_THROWS(StabilizerCode(s3, {"XI"}), std::invalid_argument);
@@ -277,8 +289,9 @@ int main()
     {
         PauliSpace           sp(7);
         const StabilizerCode code(sp, steane);
-        PauliSpace           other(7);
-        CHECK_THROWS(code.has_inequivalent_pair(other.all()), std::logic_error);
+        // A second space cannot be built at all here, which takes the place of
+        // the "set from a different PauliSpace" check.
+        CHECK_THROWS(PauliSpace(7), std::runtime_error);
         CHECK_THROWS(code.with_syndrome({true}), std::invalid_argument);
         CHECK_THROWS(code.syndrome("XX"), std::invalid_argument);
     }

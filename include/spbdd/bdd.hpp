@@ -3,20 +3,21 @@
 // ===========================================================================
 //  spbdd::Bdd -- an owning handle on one BDD node.
 //
-//  CUDD's own header is deliberately absent here. DdNode is forward-declared,
-//  so a program that uses spbdd needs -Iinclude and nothing else on its
-//  include path. The price is that every function which has to call into CUDD
-//  is defined in src/bdd.cpp instead of inline; next to the cost of a BDD
-//  operation that is not measurable.
+//  BuDDy's own header is deliberately absent here. A BuDDy node is an index
+//  into a global table rather than a pointer, so the handle below is an int
+//  and this header needs nothing from <bdd.h>: a program that uses spbdd needs
+//  -Iinclude and nothing else on its include path. The price is that every
+//  function which has to call into BuDDy is defined in src/bdd.cpp instead of
+//  inline; next to the cost of a BDD operation that is not measurable.
 //
 //  Two properties everything above this layer relies on:
 //
 //    1. Reference counting. A Bdd owns exactly one reference to its node and
 //       hands it back when it dies. No code above this file writes a
-//       Cudd_Ref by hand.
+//       bdd_addref by hand.
 //
 //    2. Canonicity. Two Bdds are equal iff they denote the same boolean
-//       function, so equality is a pointer comparison, never a traversal.
+//       function, so equality is an integer comparison, never a traversal.
 //
 //  A Bdd points at its Manager without keeping it alive; the Manager must
 //  outlive every Bdd made from it. That is not a burden in practice because a
@@ -30,22 +31,25 @@
 #include <utility>
 #include <vector>
 
-struct DdNode;      // CUDD's node type, forward-declared on purpose (see above)
-
 namespace spbdd {
 
 class Manager;
+
+// BuDDy's node handle. Plain `int`, so no forward declaration is possible or
+// needed; the zero value is a legitimate node (the false terminal), which is
+// why validity is carried by the Manager pointer rather than by this.
+using NodeId = int;
 
 class Bdd {
 public:
     Bdd() noexcept = default;
 
     // Takes over a reference the caller already owns -- that is, exactly what
-    // a CUDD call returns once it has been Cudd_Ref'd.
-    static Bdd adopt(Manager *mgr, DdNode *node) noexcept;
+    // a BuDDy call returns once it has been bdd_addref'd.
+    static Bdd adopt(Manager *mgr, NodeId node) noexcept;
 
     // Adds a reference of its own.
-    static Bdd borrow(Manager *mgr, DdNode *node);
+    static Bdd borrow(Manager *mgr, NodeId node);
 
     Bdd(const Bdd &);
     Bdd(Bdd &&) noexcept;
@@ -55,9 +59,9 @@ public:
 
     bool     valid() const noexcept { return mgr_ != nullptr; }
     Manager *manager() const noexcept { return mgr_; }
-    DdNode  *node() const noexcept { return node_; }
+    NodeId   node() const noexcept { return node_; }
 
-    // Canonicity (see the header comment) makes this a pointer comparison.
+    // Canonicity (see the header comment) makes this an integer comparison.
     bool operator==(const Bdd &o) const noexcept { return mgr_ == o.mgr_ && node_ == o.node_; }
     bool operator!=(const Bdd &o) const noexcept { return !(*this == o); }
 
@@ -74,8 +78,8 @@ public:
     Bdd &operator^=(const Bdd &o);
 
     // --- quantification ----------------------------------------------------
-    // `vars` is a plain list of variable numbers; the cube CUDD wants is built
-    // and released internally.
+    // `vars` is a plain list of variable numbers; the varset BuDDy wants is
+    // built and released internally.
     Bdd exists(const std::vector<int> &vars) const;
     Bdd forall(const std::vector<int> &vars) const;
 
@@ -89,8 +93,8 @@ public:
 
     // --- structure ---------------------------------------------------------
     // top_var, low and high are meaningful only on a non-constant node and
-    // throw otherwise. CUDD stores negation as a mark on the edge; low/high
-    // resolve it, so a caller sees the plain Shannon decomposition.
+    // throw otherwise. BuDDy has no complement edges, so these are already the
+    // plain Shannon decomposition with nothing to resolve.
     bool is_constant() const;
     bool is_true() const;
     bool is_false() const;
@@ -102,14 +106,17 @@ public:
     // Satisfying assignments over a space of n_vars variables, as a double
     // because the honest answer routinely exceeds 64 bits.
     double      sat_count(int n_vars) const;
+
+    // Nodes in the diagram, counting the terminal -- so a constant is 1 and
+    // "x0 and x1" is 3. BuDDy counts internal nodes only, so this adds one.
     std::size_t node_count() const;
 
 private:
-    Bdd(Manager *mgr, DdNode *node) noexcept : mgr_(mgr), node_(node) {}
+    Bdd(Manager *mgr, NodeId node) noexcept : mgr_(mgr), node_(node) {}
     void release() noexcept;
 
     Manager *mgr_  = nullptr;
-    DdNode  *node_ = nullptr;
+    NodeId   node_ = 0;
 };
 
 } // namespace spbdd

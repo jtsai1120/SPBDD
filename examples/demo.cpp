@@ -43,7 +43,7 @@ std::string bits(const std::vector<bool> &v)
 
 } // namespace
 
-int main()
+static void steane_walkthrough()
 {
     std::printf("spbdd -- the Steane [[7,1,3]] code\n");
 
@@ -82,13 +82,6 @@ int main()
     describe("weight <= 1", sp.weight_at_most(1));
     describe("weight <= 3", sp.weight_at_most(3));
     describe("X on qubit 0, rest free", sp.matching("X******"));
-
-    {
-        // The extreme case: 4^30 operators in a single node.
-        PauliSpace big(30);
-        describe("all Paulis on 30 qubits", big.all());
-        describe("...of weight <= 2", big.weight_at_most(2));
-    }
 
     // -----------------------------------------------------------------------
     rule("set algebra");
@@ -178,5 +171,22 @@ int main()
     }
 
     std::printf("\n");
+}
+
+// A second run, with its own space: this backend allows only one at a time.
+static void scale()
+{
+    rule("the extreme case");
+
+    PauliSpace big(30);
+    describe("all Paulis on 30 qubits", big.all());
+    describe("...of weight <= 2", big.weight_at_most(2));
+    std::printf("\n");
+}
+
+int main()
+{
+    steane_walkthrough();
+    scale();
     return 0;
 }
