@@ -43,7 +43,7 @@ SPBDD is built on [CUDD](https://github.com/ivmai/cudd) and requires a C++17
 compiler. On Ubuntu/Debian:
 
 ```bash
-sudo apt install -y build-essential git autoconf automake libtool
+sudo apt install -y build-essential git
 ```
 
 Then, from the top of the repository:
