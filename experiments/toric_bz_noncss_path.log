@@ -1,0 +1,13 @@
+code           type        d method                 got    seconds  note
+[[8,2,2]]      CSS         2 BZDistMW                 2      0.003  
+[[8,2,2]]      CSS         2 QDistEvol                2      0.684  
+[[18,2,3]]     CSS         3 BZDistMW                 3      0.004  
+[[18,2,3]]     CSS         3 QDistEvol                3      0.787  
+[[32,2,4]]     CSS         4 BZDistMW                 4      0.024  
+[[32,2,4]]     CSS         4 QDistEvol                4      1.052  
+[[50,2,5]]     CSS         5 BZDistMW                 5      1.008  
+[[50,2,5]]     CSS         5 QDistEvol                5      1.387  
+[[72,2,6]]     CSS         6 BZDistMW                 6     77.012  
+[[72,2,6]]     CSS         6 QDistEvol                6      1.714  
+[[98,2,7]]     CSS         7 BZDistMW                -1   4053.490  timeout >1800s
+[[98,2,7]]     CSS         7 QDistEvol                7      2.439  

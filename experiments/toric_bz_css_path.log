@@ -1,0 +1,8 @@
+code              d method             got    seconds  note
+[[8,2,2]]         2 BZDistMW             2      0.002  
+[[18,2,3]]        3 BZDistMW             3      0.002  
+[[32,2,4]]        4 BZDistMW             4      0.002  
+[[50,2,5]]        5 BZDistMW             5      0.004  
+[[72,2,6]]        6 BZDistMW             6      0.029  
+[[98,2,7]]        7 BZDistMW             7     20.388  
+[[128,2,8]]       8 BZDistMW            -1    947.971  timeout >600s
