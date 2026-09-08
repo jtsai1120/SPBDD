@@ -39,8 +39,8 @@ if (auto pair = code.find_inequivalent_pair(errors))
 
 ## Installation and Compilation
 
-SPBDD is built on [CUDD](https://github.com/ivmai/cudd) and requires a C++17
-compiler. On Ubuntu/Debian:
+SPBDD is built on [BuDDy](https://github.com/utwente-fmt/buddy) and requires a
+C++17 compiler. On Ubuntu/Debian:
 
 ```bash
 sudo apt install -y build-essential git
@@ -49,7 +49,7 @@ sudo apt install -y build-essential git
 Then, from the top of the repository:
 
 ```bash
-make cudd      # clone and build CUDD into cudd/ (once)
+make buddy     # clone and build BuDDy into buddy/ (once)
 make           # build build/libspbdd.a
 make check     # build and run the test suite
 ```
@@ -95,7 +95,13 @@ make examples && ./build/demo
 
 Everything lives in the single header `<spbdd/spbdd.hpp>` and in the namespace `spbdd::` .
 
-To use the tool, we always start from creating a `PauliSpace` instance, which is the workspace and factory of `PauliSet`. 
+To use the tool, we always start from creating a `PauliSpace` instance, which is the workspace and factory of `PauliSet`.
+
+**Only one `PauliSpace` may be alive at a time.** BuDDy keeps its variable table
+in process-wide globals, so constructing a second one throws
+`std::runtime_error` rather than resetting the first one's table. Finish with a
+space -- let it and every `PauliSet` built from it go out of scope -- before
+starting another. 
 
 ```cpp
 spbdd::PauliSpace(int n_qubits);
