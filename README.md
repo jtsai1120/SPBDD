@@ -2,7 +2,8 @@
 
 SPBDD stores sets of *phase-free* $n$-qubit Pauli operators in symplectic representation as binary decision diagrams and provides set operations, Clifford gate propagation, fault injection, nontrivial logical error pair detection, etc.
 
-For example, finding the distance of a code:
+For example, we can inject two-qubit gate faults, propagating the error set through a circuit, and asking whether a
+decoder can still tell every pair of the resulting errors apart (i.e. nontrivial logical error pair detection):
 
 ```cpp
 #include <spbdd/spbdd.hpp>
@@ -13,17 +14,6 @@ PauliSpace sp(7);                                  // 7 qubits
 // The Steane [[7,1,3]] code.
 std::vector<std::string> generators = {"IIIXXXX", "IXXIIXX", "XIXIXIX",
                                        "IIIZZZZ", "IZZIIZZ", "ZIZIZIZ"};
-
-PauliSet S = sp.generated_by(generators);          // the stabilizer group
-PauliSet N = sp.commuting_with_all(generators);    // its normalizer
-
-printf("d = %d\n", (N - S).min_weight());          // the code distance: 3
-```
-
-Moreover, we can inject two-qubit gate faults, propagating the error set through a circuit, and asking whether a
-decoder can still tell every pair of the resulting errors apart (i.e. nontrivial logical error pair detection):
-
-```cpp
 StabilizerCode code(sp, generators);
 
 // Create a pauli set {IIIIIII} and add a two-qubit fault on qubit 0, 1
@@ -33,7 +23,7 @@ PauliSet errors = sp.identity().fault_inject({0, 1});
 errors = errors.cx(0, 2).h(3).cz(3, 5);
 
 if (auto pair = code.find_inequivalent_pair(errors))
-    printf("unsafe: %s and %s forms a nontrivial logical error pair\n",   
+    printf("unsafe: %s and %s forms a nontrivial logical error pair\n",
            pair->first.c_str(), pair->second.c_str()); // IIIIIII and XXXIIII
 ```
 
