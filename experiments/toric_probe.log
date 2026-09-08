@@ -1,0 +1,3 @@
+toric code           n     k   want d    spbdd d      seconds        nodes
+d=2                  8     2        2          2        0.031          210
+d=3                 18     2        3          3        0.073        25102
