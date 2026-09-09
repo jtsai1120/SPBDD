@@ -1,50 +1,54 @@
 # SPBDD: A BDD-based C++ library for operations on sets of Pauli operators.
 
-SPBDD stores sets of *phase-free* $n$-qubit Pauli operators in symplectic representation as binary decision diagrams and provides set operations, Clifford gate propagation, fault injection, nontrivial logical error pair detection, etc.
+SPBDD stores sets of *phase-free* $n$-qubit Pauli operators in symplectic representation as binary decision diagrams (currently built on [BuDDy](https://github.com/utwente-fmt/buddy)) and provides set operations, Clifford gate propagation, fault injection, nontrivial logical error pair detection, etc.
 
-For example, we can inject two-qubit gate faults, propagating the error set through a circuit, and asking whether a
-decoder can still tell every pair of the resulting errors apart (i.e. nontrivial logical error pair detection):
+For example, given an initial Pauli error set, we can inject two-qubit gate faults, propagating the set through a circuit, and asking whether there exist two errors in the set such that their product is a non-trivial logical error (which is important when constructing a decoder):
 
 ```cpp
+#include <iostream>
 #include <spbdd/spbdd.hpp>
-using namespace spbdd;
 
-PauliSpace sp(7);                                  // 7 qubits
+// Declare a 7-qubit Pauli Space
+spbdd::PauliSpace sp(7);
 
-// The Steane [[7,1,3]] code.
-std::vector<std::string> generators = {"IIIXXXX", "IXXIIXX", "XIXIXIX",
-                                       "IIIZZZZ", "IZZIIZZ", "ZIZIZIZ"};
-StabilizerCode code(sp, generators);
-
-// Create a pauli set {IIIIIII} and add a two-qubit fault on qubit 0, 1
-PauliSet errors = sp.identity().fault_inject({0, 1});
+// Create the identity pauli set {IIIIIII} then inject a two-qubit fault on qubit 0, 1
+spbdd::PauliSet errors = sp.identity().fault_inject({0, 1});
 
 // Propagate the pauli set through the gates
 errors = errors.cx(0, 2).h(3).cz(3, 5);
 
+// Declare the Steane [[7,1,3]] code
+std::vector<std::string> generators = {
+    "IIIXXXX", "IXXIIXX", "XIXIXIX",
+    "IIIZZZZ", "IZZIIZZ", "ZIZIZIZ"
+};
+spbdd::StabilizerCode code(sp, generators);
+
+// Find if there exist non-trivial logical error pairs (i.e. inequivalent pair under same syndrome)
 if (auto pair = code.find_inequivalent_pair(errors))
-    printf("unsafe: %s and %s forms a nontrivial logical error pair\n",
-           pair->first.c_str(), pair->second.c_str()); // IIIIIII and XXXIIII
+    std::cout << pair->first << " and " << pair->second << " form a nontrivial logical error pair\n";
+    // stdout: IIIIIII and XXXIIII form a nontrivial logical error pair
 ```
 
 ## Installation and Compilation
 
-SPBDD is built on [BuDDy](https://github.com/utwente-fmt/buddy) and requires a
-C++17 compiler. On Ubuntu/Debian:
+On Ubuntu/Debian, the following packages are required:
 
 ```bash
 sudo apt install -y build-essential git
 ```
 
-Then, from the top of the repository:
+SPBDD is available for the *installed* version and the *local build* version.
+
+For both versions, first build the library from the top of the repository:
 
 ```bash
-make buddy     # clone and build BuDDy into buddy/ (once)
+make buddy     # clone and build BuDDy into buddy/
 make           # build build/libspbdd.a
 make check     # build and run the test suite
 ```
 
-To install the headers and the archive system-wide:
+Then, for the the *installed* version:
 
 ```bash
 sudo make install                   # into /usr/local by default
@@ -53,27 +57,27 @@ make install PREFIX=$HOME/.local    # or somewhere else
 
 ## Usage
 
-Include the single header and link the single archive:
+Include the header in your program.
 
 ```cpp
 #include <spbdd/spbdd.hpp>
 ```
 
+For the *local build* version, copy the whole `SPBDD/` folder into your workspace folder, then compile:
+
 ```bash
-g++ -std=c++17 -Iinclude my_program.cpp build/libspbdd.a -lm -o my_program
+g++ -std=c++17 -ISPBDD/include my_program.cpp SPBDD/build/libspbdd.a -lm -o my_program
 ```
 
-After `make install` the include path is no longer needed and the library is
-found by name:
+For the *installed* version, compile directly:
 
 ```bash
 g++ -std=c++17 my_program.cpp -lspbdd -lm -o my_program
 ```
 
-A worked example covering the whole library — code data, set algebra, gate
-propagation, fault injection, measurement, and the decoder-safety check
-(logical error pair detection) — is in
-[`examples/demo.cpp`](examples/demo.cpp):
+(Note: `-lm` links `libm`, which BuDDy uses for pow/log)
+
+A worked example covering most of the library functions is in [`examples/demo.cpp`](examples/demo.cpp):
 
 ```bash
 make examples && ./build/demo
