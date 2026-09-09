@@ -48,7 +48,7 @@ make           # build build/libspbdd.a
 make check     # build and run the test suite
 ```
 
-Then, for the the *installed* version:
+Then, for the *installed* version:
 
 ```bash
 sudo make install                   # into /usr/local by default
@@ -87,76 +87,68 @@ make examples && ./build/demo
 
 ## API Reference
 
-Everything lives in the single header `<spbdd/spbdd.hpp>` and in the namespace `spbdd::` .
+Everything lives in the namespace `spbdd::`. 
 
-To use the tool, we always start from creating a `PauliSpace` instance, which is the workspace and factory of `PauliSet`.
-
-**Only one `PauliSpace` may be alive at a time.** BuDDy keeps its variable table
-in process-wide globals, so constructing a second one throws
-`std::runtime_error` rather than resetting the first one's table. Finish with a
-space -- let it and every `PauliSet` built from it go out of scope -- before
-starting another. 
+Start from creating a `PauliSpace` instance, which owns the $n$-qubit workspace and is utilized to construct basic `PauliSet` instances.
 
 ```cpp
 spbdd::PauliSpace(int n_qubits);
 ```
 
-Then, we create `PauliSet` instance by `PauliSpace`'s public functions and do set operations by `PauliSet`'s public functions.
+> **Note: Only one `PauliSpace` may be alive at a time** — BuDDy keeps its variable
+table in process-wide globals, so a second one throws `std::runtime_error`.
 
-Note that sets built from the same `PauliSpace` may be operated with each other, while sets from different `PauliSpace` may not.
+---
 
-### `PauliSpace` — building set(s)
-
-
+### `PauliSpace`
 
 | Returns | Member | Arguments | Description |
 |---|---|---|---|
-| `int` | `n_qubits` | | Number of qubits |
-| `void` | `grow_to` | `int n_qubits` | Add qubits; the space can only grow |
+| `int` | `n_qubits` | | # of qubits |
+| `void` | `grow_to` | `int n_qubits` | Add qubits (# of qubits can only grow) |
 
-**Basic sets**
 
-| Returns | Member | Arguments | Resulting set |
-|---|---|---|---|
-| `PauliSet` | `empty` | | `{}` |
-| `PauliSet` | `all` | | All 4^n operators |
-| `PauliSet` | `identity` | | `{ I...I }` |
-| `PauliSet` | `from` | `const std::string &s` | The single operator `s`, e.g. `"IXYZ"` |
-| `PauliSet` | `from_list` | `const std::vector<std::string> &list` | Exactly the listed operators |
 
-**Subgroups**
+#### **Basic sets**
 
 | Returns | Member | Arguments | Resulting set |
 |---|---|---|---|
-| `PauliSet` | `generated_by` | `const std::vector<std::string> &generators` | The group the generators span, 2^rank elements |
+| `PauliSet` | `empty` | | $\{\}$ |
+| `PauliSet` | `all` | | $\{I,X,Y,Z\}^{\otimes n}$ |
+| `PauliSet` | `identity` | | $\{I^{\otimes n}\}$ |
+| `PauliSet` | `from` | `const std::string &s` | A single operator (e.g. `s="IXXYZ"` $\rightarrow\ \{IXXYZ\}$) |
+| `PauliSet` | `from` | `const std::vector<std::string> &list` | Every listed operator (e.g. `list={"IXXYZ","ZZZZZ"}` $\rightarrow\ \{IXXYZ, ZZZZZ\}$) |
+
+#### **Groups**
+
+| Returns | Member | Arguments | Resulting set |
+|---|---|---|---|
+| `PauliSet` | `generated_by` | `const std::vector<std::string> &generators` | The group the generators span |
 | `PauliSet` | `coset_of` | `const std::string &base, const std::vector<std::string> &generators` | `base` multiplied by that group |
 
-**Support**
+#### **Support**
 
 | Returns | Member | Arguments | Resulting set |
 |---|---|---|---|
-| `PauliSet` | `supported_on` | `const std::vector<int> &qubits` | The identity outside these qubits, free on them |
-| `PauliSet` | `identity_on` | `const std::vector<int> &qubits` | The identity on these qubits, free elsewhere |
-| `PauliSet` | `pauli_at` | `int qubit, char p` | Exactly `p` on that qubit, free elsewhere |
-| `PauliSet` | `non_identity_at` | `int qubit` | Anything but the identity on that qubit |
-| `PauliSet` | `matching` | `const std::string &pattern` | A glob: `I X Y Z` pin a qubit, `*` `?` `.` leave it free |
+| `PauliSet` | `supported_on` | `const std::vector<int> &qubits` | $\{I,X,Y,Z\}$ on these qubits, while $I$ on the others |
+| `PauliSet` | `identity_on` | `const std::vector<int> &qubits` | $I$ on these qubits, while $\{I,X,Y,Z\}$ on the others |
+| `PauliSet` | `pauli_at` | `int qubit, char p` | `p` on that qubit, while $\{I,X,Y,Z\}$ on the others |
+| `PauliSet` | `non_identity_at` | `int qubit` | $\{X,Y,Z\}$  on that qubit, while $\{I,X,Y,Z\}$ on the others |
+| `PauliSet` | `matching` | `const std::string &pattern` | A specific set pattern, using `*` to represent $\{I,X,Y,Z\}$ |
 
-**Weight**
+#### **Weight**
 
-The weight of an operator is the number of qubits it does not act on with the
-identity. The overloads taking `qubits` count only those, leaving the rest
-unconstrained.
+The weight of an operator is the number of qubits with $\{X,Y,Z\}$.
 
 | Returns | Member | Arguments | Resulting set |
 |---|---|---|---|
-| `PauliSet` | `weight_exactly` | `int w` | Operators of weight exactly `w` |
-| `PauliSet` | `weight_at_most` | `int w` | Operators of weight at most `w` |
-| `PauliSet` | `weight_between` | `int lo, int hi` | Operators of weight in `[lo, hi]` |
-| `PauliSet` | `weight_exactly` | `int w, const std::vector<int> &qubits` | |
-| `PauliSet` | `weight_at_most` | `int w, const std::vector<int> &qubits` | |
-| `PauliSet` | `weight_between` | `int lo, int hi, const std::vector<int> &qubits` | |
+| `PauliSet` | `weight_exactly` | `int w [, const std::vector<int> &qubits]` | Weight exactly `w` |
+| `PauliSet` | `weight_at_most` | `int w [, const std::vector<int> &qubits]` | Weight at most `w` |
+| `PauliSet` | `weight_between` | `int lo, int hi [, const std::vector<int> &qubits]` | Weight in `[lo, hi]` |
 
-**Commutation**
+> **Note:** `qubits` is an optional argument for constraint on certain qubits while counting weight.  
+
+#### **Commutation**
 
 | Returns | Member | Arguments | Resulting set |
 |---|---|---|---|
@@ -164,10 +156,11 @@ unconstrained.
 | `PauliSet` | `anticommuting_with` | `const std::string &p` | Everything anticommuting with `p` |
 | `PauliSet` | `commuting_with_all` | `const std::vector<std::string> &ps` | Everything commuting with all of them; for stabilizer generators, the normaliser |
 
-### `PauliSet` — operation on set(s)
+---
 
-Operands of a binary operation must come from the same `PauliSpace`. Every
-member returns a new set rather than modifying this one, apart from the compound
+### `PauliSet`
+
+Every member with return type `PauliSet` returns a new set rather than modifying this one, apart from the compound
 assignments.
 
 | Returns | Member | Arguments | Description |
@@ -175,7 +168,7 @@ assignments.
 | `PauliSpace` | `space` | | The universe this set lives in |
 | `int` | `n_qubits` | | Number of qubits |
 
-**Set algebra**
+#### **Set algebra**
 
 | Returns | Member | Arguments | Description |
 |---|---|---|---|
@@ -190,18 +183,18 @@ assignments.
 Note that C++ gives `|`, `&` and `^` lower precedence than `==`, so a comparison
 against a combination needs parentheses: `x == (a ^ b)`.
 
-**Predicates**
+#### **Predicates**
 
 | Returns | Member | Arguments | Description |
 |---|---|---|---|
-| `bool` | `is_empty` | | |
+| `bool` | `is_empty` | | Whether the set has no elements |
 | `bool` | `is_universe` | | Whether the set is all 4^n operators |
-| `bool` | `contains` | `const std::string &p` | |
-| `bool` | `subset_of` | `const PauliSet &o` | |
-| `bool` | `superset_of` | `const PauliSet &o` | |
-| `bool` | `disjoint_from` | `const PauliSet &o` | |
+| `bool` | `contains` | `const std::string &p` | Whether `p` is an element |
+| `bool` | `subset_of` | `const PauliSet &o` | Whether every element is also in `o` |
+| `bool` | `superset_of` | `const PauliSet &o` | Whether every element of `o` is also here |
+| `bool` | `disjoint_from` | `const PauliSet &o` | Whether the two share no element |
 
-**Metrics**
+#### **Metrics**
 
 | Returns | Member | Arguments | Description |
 |---|---|---|---|
@@ -209,7 +202,7 @@ against a combination needs parentheses: `x == (a ^ b)`.
 | `std::size_t` | `node_count` | | Number of nodes in the diagram, which is what the set costs |
 | `int` | `min_weight` | | The smallest weight present, or `-1` for the empty set |
 
-**Derived sets**
+#### **Derived sets**
 
 | Returns | Member | Arguments | Description |
 |---|---|---|---|
@@ -218,11 +211,11 @@ against a combination needs parentheses: `x == (a ^ b)`.
 | `PauliSet` | `with_weight_at_most` | `int w` | The elements of weight at most `w` |
 | `PauliSet` | `with_weight_exactly` | `int w` | The elements of weight exactly `w` |
 
-**Clifford gates**
+#### **Clifford gates**
 
-Every gate acts by conjugation, `E -> U E U*`. Because no phase is tracked, the
-`X`, `Y` and `Z` gates are the identity map; they are provided so a circuit can
-be replayed without special-casing them.
+Every gate acts by conjugation, `E -> U E U*`.
+Because no phase is tracked, `X`, `Y` and `Z` are the identity map; they exist so
+a circuit can be replayed without special-casing them.
 
 | Returns | Member | Arguments | Images of the generators |
 |---|---|---|---|
@@ -235,12 +228,12 @@ be replayed without special-casing them.
 | `PauliSet` | `cz` | `int a, int b` | `X_a -> X_a Z_b`, `X_b -> Z_a X_b` |
 | `PauliSet` | `swap` | `int a, int b` | The two qubits exchange |
 
-**Measurement**
+#### **Measurement**
 
 Measuring splits a set rather than changing it: an element either commutes with
-the observable, and the outcome is the one the ideal circuit would give, or it
-anticommutes and the outcome is flipped. An empty side is an outcome that cannot
-occur. Measuring a stabilizer generator is one bit of syndrome extraction. A
+the observable and keeps the outcome the ideal circuit would give, or
+anticommutes and gets the flipped one. An empty side is an outcome that cannot
+occur. Measuring a stabilizer generator is one bit of syndrome extraction, and a
 destructive measurement that reuses the qubit is a split followed by `reset()`.
 
 ```cpp
@@ -257,7 +250,7 @@ struct MeasurementSplit {
 | `MeasurementSplit` | `measure_x` | `int qubit` | X-basis measurement |
 | `MeasurementSplit` | `measure_y` | `int qubit` | Y-basis measurement |
 
-**Enumeration**
+#### **Enumeration**
 
 These are the only operations whose cost is the number of elements.
 
@@ -278,7 +271,7 @@ StabilizerCode(PauliSpace space, const std::vector<std::string> &generators);
 
 | Returns | Member | Arguments | Description |
 |---|---|---|---|
-| `PauliSpace` | `space` | | The universe |
+| `PauliSpace` | `space` | | The universe this code lives in |
 | `int` | `n_qubits` | | *n* |
 | `int` | `n_stabilizers` | | *r*, the rank of the generator set |
 | `int` | `n_logical` | | *k = n - r* |
@@ -294,7 +287,7 @@ StabilizerCode(PauliSpace space, const std::vector<std::string> &generators);
 | `PauliSet` | `with_syndrome` | `const std::vector<bool> &syndrome` | Every operator with that syndrome |
 | `PauliSet` | `with_logical_signature` | `const std::vector<bool> &signature` | Every operator with that signature |
 | `bool` | `has_inequivalent_pair` | `const PauliSet &errors` | Whether two elements multiply into a logical operator |
-| `std::optional<Pair>` | `find_inequivalent_pair` | `const PauliSet &errors` | The same question, with a counterexample |
+| `std::optional<StabilizerCode::Pair>` | `find_inequivalent_pair` | `const PauliSet &errors` | The same question, with a counterexample |
 
 A pair reported by `find_inequivalent_pair` is indistinguishable to any decoder:
 the two errors produce identical observations, yet correcting one leaves a

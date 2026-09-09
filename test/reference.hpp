@@ -208,7 +208,7 @@ inline Strings conjugate(const Strings &b, const std::vector<int> &qubits,
 // it with the library's answer using PauliSet::operator==.
 inline spbdd::PauliSet as_set(const spbdd::PauliSpace &sp, const Strings &s)
 {
-    return sp.from_list(std::vector<std::string>(s.begin(), s.end()));
+    return sp.from(std::vector<std::string>(s.begin(), s.end()));
 }
 
 inline std::vector<std::string> as_vector(const Strings &s)

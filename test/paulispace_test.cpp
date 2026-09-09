@@ -37,7 +37,7 @@ int main()
         CHECK(sp.identity().size() == 1.0);
         CHECK(sp.identity().contains("IIII"));
         CHECK(sp.from("XYZI").size() == 1.0);
-        CHECK(sp.from_list({"XXII", "IIZZ", "YYYY"}).size() == 3.0);
+        CHECK(sp.from({"XXII", "IIZZ", "YYYY"}).size() == 3.0);
         CHECK(sp.parity({0, 2}, false).size() == 128.0);
         CHECK(sp.cube({{0, true}, {1, false}}).size() == 64.0);
         CHECK_THROWS(sp.from("XYZ"), std::invalid_argument);

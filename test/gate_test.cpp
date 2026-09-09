@@ -108,7 +108,7 @@ int main()
     SECTION("bijection and involution");
     {
         PauliSpace sp(n);
-        const PauliSet b = sp.from_list({"XIZ", "IYI", "ZZZ", "IIX"});
+        const PauliSet b = sp.from({"XIZ", "IYI", "ZZZ", "IIX"});
         for (const GateSpec &g : gates) {
             CHECK_AT(g.apply(b).size() == b.size(), (std::string(g.name) + " preserves cardinality").c_str());
             CHECK_AT(g.apply(g.apply(b)) == b, (std::string(g.name) + " is an involution").c_str());

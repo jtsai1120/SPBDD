@@ -28,6 +28,7 @@
 #include "spbdd/manager.hpp"
 #include "spbdd/pauli.hpp"
 
+#include <initializer_list>
 #include <memory>
 #include <string>
 #include <utility>
@@ -75,7 +76,12 @@ public:
     // --- explicitly listed elements ----------------------------------------
     PauliSet from(const std::string &s) const;
     PauliSet from(const std::vector<Pauli> &p) const;
-    PauliSet from_list(const std::vector<std::string> &list) const;
+    // The union of the listed operators.
+    PauliSet from(const std::vector<std::string> &list) const;
+    // A braced list of string literals also matches the iterator-pair
+    // constructors of std::string and std::vector<Pauli>, which would make
+    // from({XXII, IIZZ}) ambiguous. This exact match settles it.
+    PauliSet from(std::initializer_list<std::string> list) const;
 
     // --- subgroups ---------------------------------------------------------
     // The GF(2) span of the generators: 2^rank elements, built without ever

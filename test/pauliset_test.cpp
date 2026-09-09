@@ -175,7 +175,7 @@ static void checks_on_six_qubits()
         CHECK(s6.identity().min_weight() == 0);
         CHECK(s6.all().min_weight() == 0);
         CHECK(s6.from("XXIIII").min_weight() == 2);
-        CHECK(s6.from_list({"XXXXXI", "IIZZII"}).min_weight() == 2);
+        CHECK(s6.from({"XXXXXI", "IIZZII"}).min_weight() == 2);
         CHECK(s6.weight_exactly(4).min_weight() == 4);
         CHECK(s6.weight_exactly(6).min_weight() == 6);
     }

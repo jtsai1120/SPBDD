@@ -124,7 +124,7 @@ static void steane_walkthrough()
     // -----------------------------------------------------------------------
     rule("circuit level");
 
-    const PauliSet clean = sp.from_list({"XIIIIII", "IIZIIII"});
+    const PauliSet clean = sp.from({"XIIIIII", "IIZIIII"});
     describe("two known errors", clean);
 
     // A fault at a two-qubit gate location multiplies by all 16 Paulis on those

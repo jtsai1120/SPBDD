@@ -224,11 +224,16 @@ PauliSet PauliSpace::from(const std::string &s) const
     return from(parse_pauli_string(s, st_->n, "from"));
 }
 
-PauliSet PauliSpace::from_list(const std::vector<std::string> &list) const
+PauliSet PauliSpace::from(const std::vector<std::string> &list) const
 {
     Bdd f = st_->mgr.constant(false);
     for (const std::string &s : list) f |= from(s).bdd();
     return wrap(std::move(f));
+}
+
+PauliSet PauliSpace::from(std::initializer_list<std::string> list) const
+{
+    return from(std::vector<std::string>(list));
 }
 
 // ===========================================================================
