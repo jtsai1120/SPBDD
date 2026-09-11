@@ -131,7 +131,9 @@ public:
 
     PauliSet h(int qubit) const;    // X <-> Z
     PauliSet s(int qubit) const;    // X -> Y, Z -> Z.  S and S* agree here
+    PauliSet sdg(int qubit) const;  // S*: same map as s() in this representation
     PauliSet sx(int qubit) const;   // sqrt(X):  X -> X, Z -> Y
+    PauliSet sxdg(int qubit) const; // sqrt(X)*: same map as sx() in this representation
 
     PauliSet cx(int control, int target) const;
     PauliSet cy(int control, int target) const;

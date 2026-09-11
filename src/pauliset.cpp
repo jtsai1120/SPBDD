@@ -239,10 +239,33 @@ PauliSet PauliSet::s(int qubit) const
     return sp_.wrap(f_.compose({{zv, m.literal(xv) ^ m.literal(zv)}}));
 }
 
+// S* sends X -> Y, Z -> Z as well: S and S* differ only by the sign of Y,
+// which this phase-free representation does not carry. A separate entry point
+// exists so a circuit can be replayed without special-casing adjoints.
+PauliSet PauliSet::sdg(int qubit) const
+{
+    require_qubit(sp_, qubit, "sdg");
+    Manager  &m  = sp_.manager();
+    const int xv = PauliSpace::xvar(qubit);
+    const int zv = PauliSpace::zvar(qubit);
+    return sp_.wrap(f_.compose({{zv, m.literal(xv) ^ m.literal(zv)}}));
+}
+
 // X -> X, Z -> Y = XZ. The mirror image of s().
 PauliSet PauliSet::sx(int qubit) const
 {
     require_qubit(sp_, qubit, "sx");
+    Manager  &m  = sp_.manager();
+    const int xv = PauliSpace::xvar(qubit);
+    const int zv = PauliSpace::zvar(qubit);
+    return sp_.wrap(f_.compose({{xv, m.literal(xv) ^ m.literal(zv)}}));
+}
+
+// sqrt(X)* sends X -> X, Z -> Y as well, for the same reason sdg() agrees
+// with s(): the sign that distinguishes the adjoint is not tracked here.
+PauliSet PauliSet::sxdg(int qubit) const
+{
+    require_qubit(sp_, qubit, "sxdg");
     Manager  &m  = sp_.manager();
     const int xv = PauliSpace::xvar(qubit);
     const int zv = PauliSpace::zvar(qubit);

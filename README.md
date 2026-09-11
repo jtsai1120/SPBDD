@@ -113,11 +113,11 @@ table in process-wide globals, so a second one throws `std::runtime_error`.
 
 | Returns | Member | Arguments | Resulting set |
 |---|---|---|---|
-| `PauliSet` | `empty` | | $\{\}$ |
-| `PauliSet` | `all` | | $\{I,X,Y,Z\}^{\otimes n}$ |
-| `PauliSet` | `identity` | | $\{I^{\otimes n}\}$ |
-| `PauliSet` | `from` | `const std::string &s` | A single operator (e.g. `s="IXXYZ"` $\rightarrow\ \{IXXYZ\}$) |
-| `PauliSet` | `from` | `const std::vector<std::string> &list` | Every listed operator (e.g. `list={"IXXYZ","ZZZZZ"}` $\rightarrow\ \{IXXYZ, ZZZZZ\}$) |
+| `PauliSet` | `empty` | | {} |
+| `PauliSet` | `all` | | {$I,X,Y,Z$}$^{\otimes n}$ |
+| `PauliSet` | `identity` | | {$I$}$^{\otimes n}$ |
+| `PauliSet` | `from` | `const std::string &s` | A single operator (e.g. `s="IXXYZ"` $\rightarrow$ {$IXXYZ$}) |
+| `PauliSet` | `from` | `const std::vector<std::string> &list` | Every listed operator (e.g. `list={"IXXYZ","ZZZZZ"}` $\rightarrow$ {$IXXYZ, ZZZZZ$}) |
 
 #### **Groups**
 
@@ -130,15 +130,15 @@ table in process-wide globals, so a second one throws `std::runtime_error`.
 
 | Returns | Member | Arguments | Resulting set |
 |---|---|---|---|
-| `PauliSet` | `supported_on` | `const std::vector<int> &qubits` | $\{I,X,Y,Z\}$ on these qubits, while $I$ on the others |
-| `PauliSet` | `identity_on` | `const std::vector<int> &qubits` | $I$ on these qubits, while $\{I,X,Y,Z\}$ on the others |
-| `PauliSet` | `pauli_at` | `int qubit, char p` | `p` on that qubit, while $\{I,X,Y,Z\}$ on the others |
-| `PauliSet` | `non_identity_at` | `int qubit` | $\{X,Y,Z\}$  on that qubit, while $\{I,X,Y,Z\}$ on the others |
-| `PauliSet` | `matching` | `const std::string &pattern` | A specific set pattern, using `*` to represent $\{I,X,Y,Z\}$ |
+| `PauliSet` | `supported_on` | `const std::vector<int> &qubits` | {$I,X,Y,Z$} on these qubits, while $I$ on the others |
+| `PauliSet` | `identity_on` | `const std::vector<int> &qubits` | $I$ on these qubits, while {$I,X,Y,Z$} on the others |
+| `PauliSet` | `pauli_at` | `int qubit, char p` | `p` on that qubit, while {$I,X,Y,Z$} on the others |
+| `PauliSet` | `non_identity_at` | `int qubit` | {$X,Y,Z$}  on that qubit, while {$I,X,Y,Z$} on the others |
+| `PauliSet` | `matching` | `const std::string &pattern` | A specific set pattern, using `*` to represent {$I,X,Y,Z$} |
 
 #### **Weight**
 
-The weight of an operator is the number of qubits with $\{X,Y,Z\}$.
+The weight of an operator is the number of qubits with {$X,Y,Z$}.
 
 | Returns | Member | Arguments | Resulting set |
 |---|---|---|---|
@@ -160,15 +160,14 @@ The weight of an operator is the number of qubits with $\{X,Y,Z\}$.
 
 ### `PauliSet`
 
-Every member with return type `PauliSet` returns a new set rather than modifying this one, apart from the compound
-assignments.
-
 | Returns | Member | Arguments | Description |
 |---|---|---|---|
-| `PauliSpace` | `space` | | The universe this set lives in |
-| `int` | `n_qubits` | | Number of qubits |
+| `PauliSpace` | `space` | | The PauliSpace it lives in |
+| `int` | `n_qubits` | | # of qubits |
 
 #### **Set algebra**
+
+> **Hint:** one can instead think of the boolean algebra on the characteristic functions instead of the set algebra.
 
 | Returns | Member | Arguments | Description |
 |---|---|---|---|
@@ -177,18 +176,15 @@ assignments.
 | `PauliSet` | `operator-` | `const PauliSet &o` | Difference |
 | `PauliSet` | `operator^` | `const PauliSet &o` | Symmetric difference |
 | `PauliSet` | `operator~` | | Complement |
-| `PauliSet &` | `operator\|=` `operator&=` `operator-=` `operator^=` | `const PauliSet &o` | The same, in place |
-| `bool` | `operator==` `operator!=` | `const PauliSet &o` | Set equality |
-
-Note that C++ gives `|`, `&` and `^` lower precedence than `==`, so a comparison
-against a combination needs parentheses: `x == (a ^ b)`.
+| `PauliSet&` | `operator\|=`, `operator&=`, `operator-=`, `operator^=` | `const PauliSet &o` | In place ver. |
+| `bool` | `operator==`, `operator!=` | `const PauliSet &o` | Set equality |
 
 #### **Predicates**
 
 | Returns | Member | Arguments | Description |
 |---|---|---|---|
 | `bool` | `is_empty` | | Whether the set has no elements |
-| `bool` | `is_universe` | | Whether the set is all 4^n operators |
+| `bool` | `is_universe` | | Whether the set is all $4^n$ operators |
 | `bool` | `contains` | `const std::string &p` | Whether `p` is an element |
 | `bool` | `subset_of` | `const PauliSet &o` | Whether every element is also in `o` |
 | `bool` | `superset_of` | `const PauliSet &o` | Whether every element of `o` is also here |
@@ -198,34 +194,32 @@ against a combination needs parentheses: `x == (a ^ b)`.
 
 | Returns | Member | Arguments | Description |
 |---|---|---|---|
-| `double` | `size` | | Number of elements; a `double` because it reaches 4^n |
-| `std::size_t` | `node_count` | | Number of nodes in the diagram, which is what the set costs |
+| `double` | `size` | | Number of elements; a `double` because it reaches $4^n$ |
+| `std::size_t` | `node_count` | | Number of nodes in the diagram, which represents memery costs |
 | `int` | `min_weight` | | The smallest weight present, or `-1` for the empty set |
 
 #### **Derived sets**
 
 | Returns | Member | Arguments | Description |
 |---|---|---|---|
-| `PauliSet` | `fault_inject` | `const std::vector<int> &qubits` | Inject a fault at these locations: multiply by every operator supported on them |
+| `PauliSet` | `fault_inject` | `const std::vector<int> &qubits` | Inject a fault at these qubits |
 | `PauliSet` | `reset` | `const std::vector<int> &qubits` | Rewrite every element to be the identity on these qubits |
-| `PauliSet` | `with_weight_at_most` | `int w` | The elements of weight at most `w` |
-| `PauliSet` | `with_weight_exactly` | `int w` | The elements of weight exactly `w` |
+| `PauliSet` | `with_weight_at_most` | `int w` | Filter the elements of weight at most `w` |
+| `PauliSet` | `with_weight_exactly` | `int w` | Filter the elements of weight exactly `w` |
 
 #### **Clifford gates**
 
-Every gate acts by conjugation, `E -> U E U*`.
-Because no phase is tracked, `X`, `Y` and `Z` are the identity map; they exist so
-a circuit can be replayed without special-casing them.
+Every gate $U$ acts on the Pauli operator $E$ by conjugation: $E \mapsto U E U^\dagger $.
 
-| Returns | Member | Arguments | Images of the generators |
+| Returns | Member | Arguments | Images of the Pauli generators |
 |---|---|---|---|
 | `PauliSet` | `x` `y` `z` | `int qubit` | unchanged |
-| `PauliSet` | `h` | `int qubit` | `X -> Z`, `Z -> X` |
-| `PauliSet` | `s` | `int qubit` | `X -> Y`, `Z -> Z`; `S` and `S*` agree here |
-| `PauliSet` | `sx` | `int qubit` | `X -> X`, `Z -> Y` |
-| `PauliSet` | `cx` | `int control, int target` | `X_c -> X_c X_t`, `Z_t -> Z_c Z_t` |
-| `PauliSet` | `cy` | `int control, int target` | `X_c -> X_c Y_t`, `X_t -> Z_c X_t`, `Z_t -> Z_c Z_t` |
-| `PauliSet` | `cz` | `int a, int b` | `X_a -> X_a Z_b`, `X_b -> Z_a X_b` |
+| `PauliSet` | `h` | `int qubit` | $X \mapsto Z,\ Z \mapsto X$ |
+| `PauliSet` | `s`, `sdg` | `int qubit` | $X \mapsto Y,\ Z \mapsto Z$ |
+| `PauliSet` | `sx`, `sxdg` | `int qubit` | $X \mapsto X,\ Z \mapsto Y$ |
+| `PauliSet` | `cx` | `int control, int target` | $X_c \mapsto X_c X_t,\ Z_t \mapsto Z_c Z_t$ |
+| `PauliSet` | `cy` | `int control, int target` | $X_c \mapsto X_c Y_t, X_t \mapsto Z_c X_t,\ Z_t \mapsto Z_c Z_t$ |
+| `PauliSet` | `cz` | `int a, int b` | $X_a \mapsto X_a Z_b,\ X_b \mapsto Z_a X_b$ |
 | `PauliSet` | `swap` | `int a, int b` | The two qubits exchange |
 
 #### **Measurement**

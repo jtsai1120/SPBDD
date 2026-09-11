@@ -3,3 +3,5 @@
 /cudd/
 *.o
 *.a
+
+*.DS_Store
