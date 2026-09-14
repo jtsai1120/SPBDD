@@ -88,21 +88,21 @@ public:
     PauliSet with_weight_at_most(int w) const;
     PauliSet with_weight_exactly(int w) const;
 
-    // --- measurement -------------------------------------------------------
-    // Measuring a Pauli observable splits the set rather than changing it. An
-    // element either commutes with the observable, and the outcome is the one
-    // the ideal circuit would give, or anticommutes with it and the outcome is
-    // flipped. Conditioning on what was actually read is therefore an
-    // intersection with a half-space.
-    //
-    // An empty side is an outcome that cannot occur under these errors.
-    //
-    // The measurement does not by itself do anything to the qubit. A destructive
-    // measurement that reuses the qubit is this split followed by reset().
-    // Measuring a stabilizer generator splits the set by one syndrome bit,
-    // which is what syndrome extraction is.
-    MeasurementSplit measure(const std::string &observable) const;
+    // --- commutation -------------------------------------------------------
+    // The elements that commute, or anticommute, with a Pauli operator. The
+    // two are complementary within the set, and each is one intersection with
+    // a half-space. Measuring an observable `p` on a set of errors is exactly
+    // this split: the commuting half sees the outcome the ideal circuit would
+    // give, the anticommuting half sees it flipped, so measuring a stabilizer
+    // generator is one bit of syndrome extraction.
+    PauliSet with_commuting(const std::string &p) const;
+    PauliSet with_anticommuting(const std::string &p) const;
 
+    // --- measurement -------------------------------------------------------
+    // The one-qubit cases, returning both halves at once. An empty side is an
+    // outcome that cannot occur under these errors. The measurement does not
+    // by itself do anything to the qubit; a destructive measurement that reuses
+    // the qubit is this split followed by reset().
     MeasurementSplit measure_z(int qubit) const;   // reads the x coordinate
     MeasurementSplit measure_x(int qubit) const;   // reads the z coordinate
     MeasurementSplit measure_y(int qubit) const;   // reads their parity

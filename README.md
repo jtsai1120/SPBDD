@@ -206,6 +206,8 @@ The weight of an operator is the number of qubits with {$X,Y,Z$}.
 | `PauliSet` | `reset` | `const std::vector<int> &qubits` | Rewrite every element to be the identity on these qubits |
 | `PauliSet` | `with_weight_at_most` | `int w` | Filter the elements of weight at most `w` |
 | `PauliSet` | `with_weight_exactly` | `int w` | Filter the elements of weight exactly `w` |
+| `PauliSet` | `with_commuting` | `const std::string &p` | Filter the elements commuting with `p` |
+| `PauliSet` | `with_anticommuting` | `const std::string &p` | Filter the elements anticommuting with `p` |
 
 #### **Clifford gates**
 
@@ -224,22 +226,17 @@ Every gate $U$ acts on the Pauli operator $E$ by conjugation: $E \mapsto U E U^\
 
 #### **Measurement**
 
-Measuring splits a set rather than changing it: an element either commutes with
-the observable and keeps the outcome the ideal circuit would give, or
-anticommutes and gets the flipped one. An empty side is an outcome that cannot
-occur. Measuring a stabilizer generator is one bit of syndrome extraction, and a
-destructive measurement that reuses the qubit is a split followed by `reset()`.
+Split the set into two subset, 
 
 ```cpp
 struct MeasurementSplit {
-    PauliSet unflipped;   // the outcome the ideal circuit would give
-    PauliSet flipped;     // the other one
+    PauliSet unflipped;   // subset of meas-outcome = 0
+    PauliSet flipped;     // subset of meas-outcome = 1
 };
 ```
 
 | Returns | Member | Arguments | Description |
 |---|---|---|---|
-| `MeasurementSplit` | `measure` | `const std::string &observable` | Measure any Pauli observable |
 | `MeasurementSplit` | `measure_z` | `int qubit` | Z-basis measurement |
 | `MeasurementSplit` | `measure_x` | `int qubit` | X-basis measurement |
 | `MeasurementSplit` | `measure_y` | `int qubit` | Y-basis measurement |

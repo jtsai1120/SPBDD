@@ -134,11 +134,11 @@ static void steane_walkthrough()
     const PauliSet faulted = clean.forget({2, 3});
     describe("after a fault on {2,3}", faulted);
 
-    // Measuring splits the set rather than changing it. Measuring a stabilizer
-    // generator is one bit of syndrome extraction.
-    const MeasurementSplit m = faulted.measure(generators[0]);
-    describe("  outcome as expected", m.unflipped);
-    describe("  outcome flipped", m.flipped);
+    // Measuring a stabilizer generator is one bit of syndrome extraction: the
+    // errors that commute with it read the expected outcome, the rest read it
+    // flipped. The two halves partition the set.
+    describe("  outcome as expected", faulted.with_commuting(generators[0]));
+    describe("  outcome flipped", faulted.with_anticommuting(generators[0]));
 
     // Reset is quantify-then-pin, in that order: a real projection, so the set
     // shrinks back.

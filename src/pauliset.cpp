@@ -337,41 +337,49 @@ PauliSet PauliSet::swap(int a, int b) const
 
 namespace {
 
-// The observable as an n-character Pauli string, for the one-qubit cases.
-std::string single_qubit_observable(const PauliSpace &sp, int qubit, char letter, const char *who)
-{
-    require_qubit(sp, qubit, who);
-    std::string s(static_cast<std::size_t>(sp.n_qubits()), 'I');
-    s[static_cast<std::size_t>(qubit)] = letter;
-    return s;
-}
-
 } // namespace
 
-MeasurementSplit PauliSet::measure(const std::string &observable) const
+// "Commutes with p" is one parity check over the symplectic product, so each
+// of these is a single intersection and neither one enumerates anything.
+PauliSet PauliSet::with_commuting(const std::string &p) const
 {
-    // "Anticommutes with the observable" is one parity check, so each side is a
-    // single intersection and neither one enumerates anything. Together the two
-    // sides partition the set: an empty side is an outcome that cannot occur.
-    return MeasurementSplit{*this & sp_.commuting_with(observable),
-                            *this & sp_.anticommuting_with(observable)};
+    return sp_.wrap(f_ & sp_.commuting_with(p).bdd());
 }
 
+PauliSet PauliSet::with_anticommuting(const std::string &p) const
+{
+    return sp_.wrap(f_ & sp_.anticommuting_with(p).bdd());
+}
+
+// For a one-qubit observable the symplectic product collapses to one or two
+// variables of that qubit, so there is no parity check to build: the split is
+// the set intersected with a literal and with its negation.
+//
 // X and Y anticommute with Z while I and Z do not, so a Z-basis measurement
-// reads the x coordinate of the qubit.
+// reads the x coordinate; an X-basis one reads the z coordinate; and a Y-basis
+// one reads their XOR, since X and Z each carry one of the two bits and Y
+// carries both.
 MeasurementSplit PauliSet::measure_z(int qubit) const
 {
-    return measure(single_qubit_observable(sp_, qubit, 'Z', "measure_z"));
+    require_qubit(sp_, qubit, "measure_z");
+    const Bdd x = sp_.manager().literal(PauliSpace::xvar(qubit));
+    return MeasurementSplit{sp_.wrap(f_ & !x), sp_.wrap(f_ & x)};
 }
 
 MeasurementSplit PauliSet::measure_x(int qubit) const
 {
-    return measure(single_qubit_observable(sp_, qubit, 'X', "measure_x"));
+    require_qubit(sp_, qubit, "measure_x");
+    const Bdd z = sp_.manager().literal(PauliSpace::zvar(qubit));
+    return MeasurementSplit{sp_.wrap(f_ & !z), sp_.wrap(f_ & z)};
 }
 
 MeasurementSplit PauliSet::measure_y(int qubit) const
 {
-    return measure(single_qubit_observable(sp_, qubit, 'Y', "measure_y"));
+    require_qubit(sp_, qubit, "measure_y");
+    const Bdd x    = sp_.manager().literal(PauliSpace::xvar(qubit));
+    const Bdd z    = sp_.manager().literal(PauliSpace::zvar(qubit));
+    const Bdd flip = x ^ z;
+    return MeasurementSplit{sp_.wrap(f_ & !flip), sp_.wrap(f_ & flip)};
 }
 
 // ===========================================================================

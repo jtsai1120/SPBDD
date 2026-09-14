@@ -117,38 +117,47 @@ static void checks_on_three_qubits()
         CHECK(a.with_weight_exactly(2) == (a & sp.weight_exactly(2)));
     }
 
-    SECTION("measurement");
+    SECTION("commutation");
     {
         // The two sides partition the set: an element either commutes with the
-        // observable or it does not.
+        // operator or it does not.
         for (const std::string obs : {"ZII", "IXI", "YYY", "XZI", "III"}) {
-            const MeasurementSplit m = a.measure(obs);
-            const bool             ok =
-                (m.unflipped | m.flipped) == a && m.unflipped.disjoint_from(m.flipped);
-            CHECK_AT(ok, ("measure(" + obs + ") partitions the set").c_str());
+            const PauliSet c  = a.with_commuting(obs);
+            const PauliSet ac = a.with_anticommuting(obs);
+            const bool     ok = (c | ac) == a && c.disjoint_from(ac);
+            CHECK_AT(ok, ("with_commuting(" + obs + ") partitions the set").c_str());
 
             // and each side is exactly what the definition says it is
-            Strings want_unflipped, want_flipped;
+            Strings want_c, want_ac;
             for (const std::string &e : A) {
                 if (pauli_commute(parse_pauli_string(e), parse_pauli_string(obs)))
-                    want_unflipped.insert(e);
+                    want_c.insert(e);
                 else
-                    want_flipped.insert(e);
+                    want_ac.insert(e);
             }
-            const bool matches = m.unflipped == spbdd_ref::as_set(sp, want_unflipped) &&
-                                 m.flipped == spbdd_ref::as_set(sp, want_flipped);
-            CHECK_AT(matches, ("measure(" + obs + ") matches the definition").c_str());
+            const bool matches = c == spbdd_ref::as_set(sp, want_c) &&
+                                 ac == spbdd_ref::as_set(sp, want_ac);
+            CHECK_AT(matches, ("with_commuting(" + obs + ") matches the definition").c_str());
         }
 
-        // Measuring the identity can never flip anything.
-        CHECK(a.measure("III").flipped.is_empty());
-        CHECK(a.measure("III").unflipped == a);
+        // Everything commutes with the identity.
+        CHECK(a.with_anticommuting("III").is_empty());
+        CHECK(a.with_commuting("III") == a);
 
+        CHECK_THROWS(sp.all().with_commuting("XX"), std::invalid_argument);
+    }
+
+    SECTION("measurement");
+    {
         // A Z-basis measurement reads the x coordinate, an X-basis measurement
-        // the z coordinate, and a Y-basis one their parity.
-        CHECK(sp.all().measure_z(0).flipped == sp.all().measure("ZII").flipped);
-        CHECK(sp.all().measure_x(1).flipped == sp.all().measure("IXI").flipped);
-        CHECK(sp.all().measure_y(2).flipped == sp.all().measure("IIY").flipped);
+        // the z coordinate, and a Y-basis one their parity -- and each agrees
+        // with the general commutation split on the same observable.
+        CHECK(sp.all().measure_z(0).flipped == sp.all().with_anticommuting("ZII"));
+        CHECK(sp.all().measure_x(1).flipped == sp.all().with_anticommuting("IXI"));
+        CHECK(sp.all().measure_y(2).flipped == sp.all().with_anticommuting("IIY"));
+        CHECK(sp.all().measure_z(0).unflipped == sp.all().with_commuting("ZII"));
+        CHECK(sp.all().measure_x(1).unflipped == sp.all().with_commuting("IXI"));
+        CHECK(sp.all().measure_y(2).unflipped == sp.all().with_commuting("IIY"));
         CHECK(sp.from("XII").measure_z(0).flipped.size() == 1.0);
         CHECK(sp.from("ZII").measure_z(0).flipped.is_empty());
         CHECK(sp.from("YII").measure_z(0).flipped.size() == 1.0);
@@ -160,7 +169,6 @@ static void checks_on_three_qubits()
         CHECK(sp.all().measure_z(0).flipped.size() == 32.0);
 
         CHECK_THROWS(sp.all().measure_z(9), std::out_of_range);
-        CHECK_THROWS(sp.all().measure("XX"), std::invalid_argument);
     }
 }
 
