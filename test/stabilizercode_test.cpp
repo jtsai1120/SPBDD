@@ -210,6 +210,20 @@ int main()
             if (code.has_inequivalent_pair(b) != brute_has_pair(code, errors)) all_ok = false;
         }
         CHECK(all_ok);
+
+        // The same decision through the product: two elements of E multiply
+        // into a logical operator iff E * E meets N(S) \ S. This is a second
+        // formulation with no shared code, so the two must agree everywhere.
+        const PauliSet logical = code.normalizer() - code.group();
+        bool           agree   = true;
+        for (int mask = 0; mask < 32; ++mask) {
+            Strings errors;
+            for (int i = 0; i < 5; ++i)
+                if (mask & (1 << i)) errors.insert(pool[static_cast<std::size_t>(i)]);
+            const PauliSet b = spbdd_ref::as_set(sp, errors);
+            if (code.has_inequivalent_pair(b) != !((b * b) & logical).is_empty()) agree = false;
+        }
+        CHECK(agree);
     }
 
     SECTION("inequivalent pairs on the Steane code");

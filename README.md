@@ -176,7 +176,8 @@ The weight of an operator is the number of qubits with {$X,Y,Z$}.
 | `PauliSet` | `operator-` | `const PauliSet &o` | Difference |
 | `PauliSet` | `operator^` | `const PauliSet &o` | Symmetric difference |
 | `PauliSet` | `operator~` | | Complement |
-| `PauliSet&` | `operator\|=`, `operator&=`, `operator-=`, `operator^=` | `const PauliSet &o` | In place ver. |
+| `PauliSet` | `operator*` | `const PauliSet &o` | Product: every element of one set multiplied by every element of the other |
+| `PauliSet&` | `operator\|=`, `operator&=`, `operator-=`, `operator^=`, `operator*=` | `const PauliSet &o` | In place ver. |
 | `bool` | `operator==`, `operator!=` | `const PauliSet &o` | Set equality |
 
 #### **Predicates**

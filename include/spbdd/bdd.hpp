@@ -77,6 +77,12 @@ public:
     Bdd &operator|=(const Bdd &o);
     Bdd &operator^=(const Bdd &o);
 
+    // --- sumset ------------------------------------------------------------
+    // The set {a xor b : a in this, b in o}, as a characteristic function.
+    // The cost is bounded by the product of the two diagram sizes, never by
+    // the number of elements. See the note in bdd.cpp.
+    Bdd sumset(const Bdd &o) const;
+
     // --- quantification ----------------------------------------------------
     // `vars` is a plain list of variable numbers; the varset BuDDy wants is
     // built and released internally.

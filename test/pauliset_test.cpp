@@ -57,6 +57,32 @@ static void checks_on_three_qubits()
         CHECK_THROWS(PauliSpace(3), std::runtime_error);
     }
 
+    SECTION("product vs the definition (n=3)");
+    {
+        CHECK((a * b) == spbdd_ref::as_set(sp, spbdd_ref::product(A, B)));
+        CHECK((a * a) == spbdd_ref::as_set(sp, spbdd_ref::product(A, A)));
+        CHECK((a * b) == (b * a));                 // no phases, so commutative
+        CHECK((a * sp.identity()) == a);
+        CHECK((a * sp.empty()).is_empty());
+        CHECK((a * sp.all()).is_universe());
+
+        PauliSet acc = a;
+        acc *= b;
+        CHECK(acc == (a * b));
+
+        // the earlier operations are all products in disguise
+        CHECK(a.fault_inject({1}) == (a * sp.supported_on({1})));
+        CHECK(a.fault_inject({0, 2}) == (a * sp.supported_on({0, 2})));
+        const std::vector<std::string> gens = {"XXI", "IZZ"};
+        CHECK(sp.coset_of("YIZ", gens) == (sp.from("YIZ") * sp.generated_by(gens)));
+        CHECK((sp.generated_by(gens) * sp.generated_by(gens)) == sp.generated_by(gens));
+
+        // weights add: {wt <= i} * {wt <= j} = {wt <= i + j}
+        CHECK((sp.weight_at_most(1) * sp.weight_at_most(1)) == sp.weight_at_most(2));
+        CHECK((sp.weight_at_most(1) * sp.weight_at_most(2)) == sp.weight_at_most(3));
+        CHECK((sp.weight_exactly(1) * sp.weight_exactly(1)).contains("III"));
+    }
+
     SECTION("predicates");
     {
         CHECK(sp.empty().is_empty() && !sp.empty().is_universe());

@@ -42,6 +42,18 @@ public:
     PauliSet operator^(const PauliSet &o) const;   // symmetric difference
     PauliSet operator~() const;                    // complement
 
+    // --- product -----------------------------------------------------------
+    // {a b : a in this, b in o}: every element of one set multiplied by every
+    // element of the other. Without phases the product is the XOR of the two
+    // symplectic vectors, so this is commutative, and it is what composing
+    // two sources of error means: fault_inject(Q) is the product with
+    // supported_on(Q), a coset is the product with a group, and two elements
+    // of E multiply into a logical operator iff E * E meets N(S) \ S. The cost
+    // is bounded by the product of the two diagram sizes, never by the number
+    // of elements.
+    PauliSet  operator*(const PauliSet &o) const;
+    PauliSet &operator*=(const PauliSet &o);
+
     PauliSet &operator|=(const PauliSet &o);
     PauliSet &operator&=(const PauliSet &o);
     PauliSet &operator-=(const PauliSet &o);

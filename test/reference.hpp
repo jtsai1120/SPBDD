@@ -69,6 +69,17 @@ inline Strings sym_diff(const Strings &a, const Strings &b)
 
 inline Strings complement(const Strings &a, int n) { return subtract(universe(n), a); }
 
+// Every element of a times every element of b, formed by actually multiplying.
+inline Strings product(const Strings &a, const Strings &b)
+{
+    Strings r;
+    for (const std::string &x : a)
+        for (const std::string &y : b)
+            r.insert(spbdd::pauli_string_to_text(
+                spbdd::pauli_mul(spbdd::parse_pauli_string(x), spbdd::parse_pauli_string(y))));
+    return r;
+}
+
 // --- the builders ----------------------------------------------------------
 
 // The span of the generators, formed by actually multiplying out all 2^k

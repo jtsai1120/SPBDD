@@ -60,6 +60,14 @@ PauliSet PauliSet::operator^(const PauliSet &o) const
 
 PauliSet PauliSet::operator~() const { return sp_.wrap(!f_); }
 
+PauliSet PauliSet::operator*(const PauliSet &o) const
+{
+    require_same_space(*this, o, "operator*");
+    return sp_.wrap(f_.sumset(o.f_));
+}
+
+PauliSet &PauliSet::operator*=(const PauliSet &o) { return *this = *this * o; }
+
 PauliSet &PauliSet::operator|=(const PauliSet &o) { return *this = *this | o; }
 PauliSet &PauliSet::operator&=(const PauliSet &o) { return *this = *this & o; }
 PauliSet &PauliSet::operator-=(const PauliSet &o) { return *this = *this - o; }

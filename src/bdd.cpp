@@ -32,8 +32,11 @@ extern "C" const BDD bddtrue;
 extern "C" const BDD bddfalse;
 
 #include <cmath>
+#include <functional>
 #include <stdexcept>
 #include <string>
+#include <unordered_map>
+#include <utility>
 
 namespace spbdd {
 namespace {
@@ -188,6 +191,95 @@ Bdd Bdd::ite(const Bdd &then_case, const Bdd &else_case) const
 Bdd &Bdd::operator&=(const Bdd &o) { return *this = *this & o; }
 Bdd &Bdd::operator|=(const Bdd &o) { return *this = *this | o; }
 Bdd &Bdd::operator^=(const Bdd &o) { return *this = *this ^ o; }
+
+// ===========================================================================
+//  Sumset
+// ===========================================================================
+//
+//  XOR acts on every coordinate independently, so the top variable v can be
+//  peeled off: a pair (a, b) lands on the v=1 side of the result exactly when
+//  a and b disagree on v, and on the v=0 side when they agree. Hence
+//
+//      F * G = ITE(v,  F0*G1 | F1*G0,  F0*G0 | F1*G1)
+//
+//  which is apply's skeleton with all four cofactor pairs instead of the two
+//  diagonal ones. The only BDD operations are or and ite; the xor is entirely
+//  in which cofactor feeds which side. When only one operand depends on v the
+//  two sides coincide and the ite is skipped.
+//
+//  Results are memoised on the unordered node pair -- canonicity makes that
+//  sound, commutativity makes it unordered -- so there are at most |F|*|G|
+//  subproblems. Levels have to hold still for the whole recursion, so dynamic
+//  reordering is switched off around it.
+
+namespace {
+
+struct NodePairHash {
+    std::size_t operator()(const std::pair<int, int> &p) const noexcept
+    {
+        return std::hash<long long>()((static_cast<long long>(p.first) << 32) |
+                                      static_cast<unsigned int>(p.second));
+    }
+};
+
+class Sumset {
+public:
+    explicit Sumset(Manager *mgr) : mgr_(mgr) {}
+
+    Bdd run(const Bdd &f, const Bdd &g)
+    {
+        if (f.is_false() || g.is_false()) return mgr_->constant(false);
+        // The other operand is nonempty here, and the whole space times
+        // anything nonempty is the whole space.
+        if (f.is_true() || g.is_true()) return mgr_->constant(true);
+
+        const std::pair<int, int> key = f.node() < g.node()
+                                            ? std::make_pair(f.node(), g.node())
+                                            : std::make_pair(g.node(), f.node());
+        const auto hit = memo_.find(key);
+        if (hit != memo_.end()) return hit->second;
+
+        const int lf = bdd_var2level(f.top_var());
+        const int lg = bdd_var2level(g.top_var());
+
+        Bdd result;
+        if (lf < lg) {
+            result = run(f.low(), g) | run(f.high(), g);
+        } else if (lg < lf) {
+            result = run(f, g.low()) | run(f, g.high());
+        } else {
+            const Bdd f0 = f.low(), f1 = f.high();
+            const Bdd g0 = g.low(), g1 = g.high();
+            const Bdd same  = run(f0, g0) | run(f1, g1);
+            const Bdd cross = run(f0, g1) | run(f1, g0);
+            result = mgr_->literal(f.top_var()).ite(cross, same);
+        }
+        memo_.emplace(key, result);
+        return result;
+    }
+
+private:
+    Manager                                                   *mgr_;
+    std::unordered_map<std::pair<int, int>, Bdd, NodePairHash> memo_;
+};
+
+} // namespace
+
+Bdd Bdd::sumset(const Bdd &o) const
+{
+    require_same_manager(*this, o, "sumset");
+
+    bdd_disable_reorder();
+    Bdd result;
+    try {
+        result = Sumset(mgr_).run(*this, o);
+    } catch (...) {
+        bdd_enable_reorder();
+        throw;
+    }
+    bdd_enable_reorder();
+    return result;
+}
 
 // ===========================================================================
 //  Quantification
