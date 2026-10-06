@@ -121,6 +121,7 @@ Bdd Manager::literal(int var, bool positive)
 
 void Manager::set_dynamic_reordering(bool enabled)
 {
+    dynamic_reordering_ = enabled;
     if (enabled) bdd_autoreorder(BDD_REORDER_SIFT);
     else         bdd_autoreorder(BDD_REORDER_NONE);
 }

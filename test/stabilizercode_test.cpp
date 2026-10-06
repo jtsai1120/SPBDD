@@ -250,6 +250,78 @@ int main()
         CHECK(code.has_inequivalent_pair(code.normalizer()));
     }
 
+    SECTION("the DP and the compose route agree");
+    {
+        // Same relation, two constructions. Random unions of cosets are sets
+        // with no structure for either route to lean on.
+        struct Case { const char *name; const std::vector<std::string> *gens; int n; };
+        const Case cases[] = {{"bit-flip", &bit_flip, 3}, {"five-qubit", &five_qubit, 5}, {"Steane", &steane, 7}};
+
+        unsigned long long state = 88172645463325252ULL;   // xorshift64, fixed seed
+        auto               rnd   = [&]() { state ^= state << 13; state ^= state >> 7; state ^= state << 17; return state; };
+
+        for (const Case &cs : cases) {
+            PauliSpace           sp(cs.n);
+            const StabilizerCode code(sp, *cs.gens);
+            auto                 pauli = [&](int max_weight) {
+                std::string s(static_cast<std::size_t>(cs.n), 'I');
+                const int   w = 1 + static_cast<int>(rnd() % static_cast<unsigned>(max_weight));
+                for (int i = 0; i < w; ++i) s[rnd() % static_cast<unsigned>(cs.n)] = "XYZ"[rnd() % 3];
+                return s;
+            };
+
+            bool verdicts = true, witnesses = true;
+            int  unsafe = 0, safe = 0;
+            for (int trial = 0; trial < 60; ++trial) {
+                PauliSet     e = sp.empty();
+                const int    cosets = 1 + static_cast<int>(rnd() % 4);
+                for (int c = 0; c < cosets; ++c) {
+                    std::vector<std::string> gens;
+                    const int                ng = static_cast<int>(rnd() % 3);
+                    for (int g = 0; g < ng; ++g) gens.push_back(pauli(2));
+                    e |= sp.coset_of(pauli(3), gens);
+                }
+                const auto dp  = code.find_inequivalent_pair(e, StabilizerCode::PairMethod::Dp);
+                const auto cmp = code.find_inequivalent_pair(e, StabilizerCode::PairMethod::Compose);
+                if (dp.has_value() != cmp.has_value()) verdicts = false;
+                dp.has_value() ? ++unsafe : ++safe;
+                for (const auto *r : {&dp, &cmp}) {
+                    if (!r->has_value()) continue;
+                    const auto &p = **r;
+                    const std::string prod = pauli_string_to_text(
+                        pauli_mul(parse_pauli_string(p.first), parse_pauli_string(p.second)));
+                    if (!e.contains(p.first) || !e.contains(p.second) ||
+                        code.syndrome(p.first) != code.syndrome(p.second) ||
+                        p.signature_first == p.signature_second ||
+                        !code.normalizer().contains(prod) || code.group().contains(prod))
+                        witnesses = false;
+                }
+            }
+            CHECK_AT(verdicts, (std::string(cs.name) + ": DP and compose give the same verdict").c_str());
+            CHECK_AT(witnesses, (std::string(cs.name) + ": every witness is a genuine pair").c_str());
+            std::printf("  ..    %s: %d unsafe / %d safe random sets\n", cs.name, unsafe, safe);
+        }
+
+        // Weight balls, where the answer is known: unsafe exactly when 2t >= d.
+        PauliSpace           sp(7);
+        const StabilizerCode code(sp, steane);
+        for (int t = 0; t <= 2; ++t) {
+            const PauliSet ball = sp.weight_at_most(t);
+            const bool     want = (2 * t >= 3);
+            CHECK_AT(code.has_inequivalent_pair(ball, StabilizerCode::PairMethod::Dp) == want, "DP on a weight ball");
+            CHECK_AT(code.has_inequivalent_pair(ball, StabilizerCode::PairMethod::Compose) == want, "compose on a weight ball");
+        }
+
+        // The DP must leave the reordering switch as it found it, and must give
+        // the same answer when dynamic reordering is on.
+        sp.manager().set_dynamic_reordering(true);
+        CHECK(code.has_inequivalent_pair(sp.weight_at_most(2)));
+        CHECK(!code.has_inequivalent_pair(sp.weight_at_most(1)));
+        CHECK(sp.manager().dynamic_reordering());
+        sp.manager().set_dynamic_reordering(false);
+        CHECK(!sp.manager().dynamic_reordering());
+    }
+
     SECTION("witness extraction");
     {
         PauliSpace           sp(7);
