@@ -13,6 +13,7 @@
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 
 namespace spbdd {
 namespace {
@@ -516,7 +517,66 @@ public:
         for (int v = first_var; v <= last_var; ++v) zero_ &= m.literal(v, false);
     }
 
-    Bdd run(const Bdd &f) { return image(f, 0); }
+    // Bottom-up, one level at a time. A depth-first memoised recursion would be
+    // equally correct, but it keeps the image of every (node, level) alive until
+    // the end -- far more nodes than the final answer, which is what makes the
+    // BDD package thrash on garbage collection and table growth. The image at
+    // level l only needs the images at level l + 1, so each level is computed
+    // from the one below and the one below is then released.
+    Bdd run(const Bdd &f)
+    {
+        using Level = std::vector<Bdd>;   // the (node, level) pairs reachable at one level
+        std::vector<Level>                              need(static_cast<std::size_t>(n_levels_) + 1);
+        std::vector<std::unordered_set<std::uint32_t>>  seen(static_cast<std::size_t>(n_levels_) + 1);
+        const auto add = [&](int l, const Bdd &u) {
+            if (u.is_false()) return;
+            if (seen[static_cast<std::size_t>(l)].insert(static_cast<std::uint32_t>(u.node())).second)
+                need[static_cast<std::size_t>(l)].push_back(u);
+        };
+        const auto tests_here = [&](const Bdd &u, int l) {
+            return !u.is_constant() && m_.var_to_level(u.top_var()) == l;
+        };
+
+        // Downward pass: which nodes does each level need?
+        add(0, f);
+        for (int l = 0; l < n_levels_; ++l)
+            for (const Bdd &u : need[static_cast<std::size_t>(l)]) {
+                if (tests_here(u, l)) {
+                    add(l + 1, u.low());
+                    add(l + 1, u.high());
+                } else {
+                    add(l + 1, u);
+                }
+            }
+
+        // Upward pass: image(u, l) from the images at level l + 1.
+        std::unordered_map<std::uint32_t, Bdd> next;
+        for (const Bdd &u : need[static_cast<std::size_t>(n_levels_)])
+            next.emplace(static_cast<std::uint32_t>(u.node()), zero_);
+        need[static_cast<std::size_t>(n_levels_)].clear();
+
+        const Bdd empty = m_.constant(false);
+        const auto below = [&](const std::unordered_map<std::uint32_t, Bdd> &img, const Bdd &x) -> const Bdd & {
+            return x.is_false() ? empty : img.at(static_cast<std::uint32_t>(x.node()));
+        };
+        for (int l = n_levels_ - 1; l >= 0; --l) {
+            const int                              v = m_.level_to_var(l);
+            std::unordered_map<std::uint32_t, Bdd> cur;
+            for (const Bdd &u : need[static_cast<std::size_t>(l)]) {
+                Bdd out;
+                if (tests_here(u, l)) {
+                    out = below(next, u.low()) | shifted(below(next, u.high()), v);
+                } else {
+                    const Bdd &h = below(next, u);
+                    out          = h | shifted(h, v);
+                }
+                cur.emplace(static_cast<std::uint32_t>(u.node()), std::move(out));
+            }
+            need[static_cast<std::size_t>(l)].clear();
+            next.swap(cur);   // the images of level l + 1 are released here
+        }
+        return f.is_false() ? empty : next.at(static_cast<std::uint32_t>(f.node()));
+    }
 
 private:
     Bdd shifted(const Bdd &s, int v) const
@@ -528,34 +588,10 @@ private:
         return s.compose(subs);
     }
 
-    Bdd image(const Bdd &u, int level)
-    {
-        if (u.is_false()) return m_.constant(false);
-        if (level == n_levels_) return zero_;
-
-        const std::uint64_t key = (static_cast<std::uint64_t>(static_cast<std::uint32_t>(u.node())) << 32) |
-                                  static_cast<std::uint32_t>(level);
-        if (const auto it = memo_.find(key); it != memo_.end()) return it->second;
-
-        const int v = m_.level_to_var(level);
-        Bdd       out;
-        if (!u.is_constant() && m_.var_to_level(u.top_var()) == level) {
-            const Bdd lo = image(u.low(), level + 1);
-            const Bdd hi = image(u.high(), level + 1);
-            out          = lo | shifted(hi, v);
-        } else {
-            const Bdd h = image(u, level + 1);
-            out         = h | shifted(h, v);
-        }
-        memo_.emplace(key, out);
-        return out;
-    }
-
     Manager                                &m_;
     const std::vector<std::vector<int>>    &flips_;
     int                                     n_levels_;
     Bdd                                     zero_;
-    std::unordered_map<std::uint64_t, Bdd>  memo_;
 };
 
 // The DP reads the levels of the set while it builds other diagrams, so the

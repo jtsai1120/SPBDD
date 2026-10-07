@@ -146,17 +146,24 @@ several variables.
 ### 3.5 Algorithm
 
 ```
-image(u, ℓ):                                  -- memo keyed on (u, ℓ)
+image(u, ℓ):                                  -- the recurrence (3.3), defined on (u, ℓ)
     if u = ⊥:          return ∅
     if ℓ = N:          return {0}               -- the cube y = 0 on the m target variables
-    if (u,ℓ) in memo:  return memo[(u,ℓ)]
     v ← var(ℓ)
     if u is a node and level(top(u)) = ℓ:
-        R ← image(low(u), ℓ+1)  ∪  shift(image(high(u), ℓ+1), w_v)
+        return image(low(u), ℓ+1)  ∪  shift(image(high(u), ℓ+1), w_v)
     else:                                       -- skipped level
         H ← image(u, ℓ+1)
-        R ← H ∪ shift(H, w_v)                   -- = H when w_v = 0
-    memo[(u,ℓ)] ← R;  return R
+        return H ∪ shift(H, w_v)                -- = H when w_v = 0
+
+evaluate level by level (this is what the library does):
+    need[0] ← {root};  for ℓ = 0 .. N-1:        -- downward pass: which (u, ℓ) are reachable
+        need[ℓ+1] ∪= children (or u itself, at a skipped level) of every u in need[ℓ]     (⊥ dropped)
+    next ← { (u, N) ↦ {0} : u in need[N] }
+    for ℓ = N-1 downto 0:                       -- upward pass
+        cur ← { (u, ℓ) ↦ image(u, ℓ) computed from next : u in need[ℓ] }
+        next ← cur                              -- the images of level ℓ+1 are released here
+    G ← next[root]
 
 find_inequivalent_pair(E):
     G ← image(root(E), 0)                       -- over the b, c, f variables
@@ -179,7 +186,9 @@ Notes on the implementation (`src/stabilizercode.cpp`).
 * **Reordering.** The DP interleaves reading the levels of $\mathcal E$ with building other diagrams. A dynamic
   reorder in between would move the levels, so `ReorderPause` switches dynamic reordering off for the duration of the call
   and restores it (`Manager::dynamic_reordering()` was added to make that possible).
-* The recursion depth is at most $2n+1$; memo entries hold diagrams and are released when the call returns.
+* **Evaluation order.** The recurrence is evaluated bottom-up, one level at a time, and the images of level $\ell+1$ are
+  dropped as soon as those of level $\ell$ exist. A depth-first memoised recursion computes the same diagrams but keeps the image
+  of every $(u,\ell)$ alive until the end; Section 8.1 measures what that costs (roughly a factor of 10 on the largest ball).
 
 ---
 
@@ -197,7 +206,7 @@ Notation: $|f|$ is the node count of the input diagram, $N=2n$, $m=r+2k$, $\math
 * **Total.**
   $$T_{\mathrm{DP}} \;=\; \sum_{(u,\ell)\in\text{memo}} O\big(|I(\mathrm{lo})|\cdot|I(\mathrm{hi})|\ +\ |w_v|\,|I(\mathrm{hi})|\big),
   \qquad
-  S_{\mathrm{DP}} \;=\; O\Big(\sum_{(u,\ell)} |I(u,\ell)|\Big).$$
+  S_{\mathrm{DP}} \;=\; O\Big(\max_\ell \sum_{u\ \text{at level }\ell} |I(u,\ell)|\Big)\ \text{ (level by level; a memoised DFS needs the sum over all } (u,\ell)).$$
   Every $I(u,\ell)$ is a subset of $\mathbb F_2^m$, so each diagram has at most $2^{m}$ points, and $I(\mathrm{root},0)=G$.
   The bound is *output-sensitive in the suffix images*: it is small whenever the images of suffixes of $\mathcal E$ stay
   structured in $(\sigma,\lambda)$ space, and there is no a-priori polynomial bound — the decision problem is not claimed
@@ -245,33 +254,33 @@ pre-existing tests (brute force on all subsets, the product formulation $E{*}E\c
 ## 8. Measurements
 
 All runs: one cloud container (2 vCPU, 7 GB), `g++ -O2`, BuDDy node table $2^{22}$ nodes / $2^{20}$ cache, default
-variable order, no reordering, each row one run (no repeats). "compose" is `PairMethod::Compose`, "DP" is
+variable order, no reordering, each row one run (no repeats). The DP numbers are those of the level-by-level version described in
+Section 3.5, each run alone on the machine; the compose numbers were measured earlier (some with another job running). "compose" is `PairMethod::Compose`, "DP" is
 `PairMethod::Dp`; both return the same verdict in every row where both finished. Two jobs were sometimes running on the two
-cores at once, which slows both (the $d{=}11,t{=}4$ row took 112.8 s alone and 257 s with another job running), so read the
-timings to a factor of about two. Table size matters as much: with BuDDy's smaller default table ($2^{20}$) compose on
+cores at once, which slows both, so read the timings to a factor of about two. Table size matters as much: with BuDDy's smaller default table ($2^{20}$) compose on
 $d{=}7,t{=}3$ did not finish in 600 s although it needs 111 s at $2^{22}$.
 
 **(a) Weight balls** — every Pauli of weight $\le t$ on the rotated surface code (answer: no inequivalent pair, $d>2t$).
 
 | $d$ | $t$ | $|\mathcal E|$ | diagram nodes | DP | compose |
 |---|---|---|---|---|---|
-| 5 | 2 | 2,776 | 139 | 0.011 s | 0.026 s |
-| 7 | 2 | 1.07e4 | 283 | 0.037 s | 1.55 s |
-| 7 | 3 | 5.08e5 | 369 | 0.176 s | 111.1 s |
-| 9 | 3 | 2.33e6 | 625 | 0.916 s | not finished in 600 s |
-| 9 | 4 | 1.37e8 | 771 | 6.16 s | not run |
-| 11 | 4 | 6.96e8 | 1,171 | 112.8 s | not run |
-| 13 | 4 | 2.7e9 | not measured | not finished in 900 s | not run |
+| 5 | 2 | 2,776 | 139 | 0.003 s | 0.026 s |
+| 7 | 2 | 1.07e4 | 283 | 0.016 s | 1.55 s |
+| 7 | 3 | 5.08e5 | 369 | 0.082 s | 111.1 s |
+| 9 | 3 | 2.33e6 | 625 | 0.37 s | not finished in 600 s |
+| 9 | 4 | 1.37e8 | 771 | 2.5 s | not run |
+| 11 | 4 | 6.96e8 | 1,171 | 11.6 s | not run |
+| 13 | 4 | 2.7e9 | not measured | 106 s | not run |
 
 **(b) Unstructured sets** — union of $K$ random cosets, each of $G$ random generators of weight $\le W$, on the same code
 (`pair_benchmark cosets`; fixed seed). Answer: no pair in all four.
 
 | $d$ | $K,G,W$ | $|\mathcal E|$ | diagram nodes | DP | compose |
 |---|---|---|---|---|---|
-| 5 | 20, 6, 4 | 1,280 | 7,265 | 0.021 s | 0.289 s |
-| 7 | 50, 8, 5 | 1.28e4 | 113,772 | 0.522 s | 65.2 s |
-| 9 | 100, 8, 5 | 2.56e4 | 387,759 | 5.07 s | not finished in 600 s |
-| 11 | 300, 8, 5 | 7.67e4 | 1,569,997 | 257 s (two jobs running) | not run |
+| 5 | 20, 6, 4 | 1,280 | 7,265 | 0.017 s | 0.289 s |
+| 7 | 50, 8, 5 | 1.28e4 | 113,772 | 0.53 s | 65.2 s |
+| 9 | 100, 8, 5 | 2.56e4 | 387,759 | 2.1 s | not finished in 600 s |
+| 11 | 300, 8, 5 | 7.67e4 | 1,569,997 | 20.5 s | not run |
 
 **(c) Error sets of a circuit** — all faults (at most $t$ faulty locations; input data errors counted as faults) of one
 round of flag-qubit syndrome extraction, restricted to the all-flags-zero outcomes, with every measurement record kept as a
@@ -282,28 +291,64 @@ and `|`. Time is that of `find_inequivalent_pair` only.
 
 | circuit | $N$ | $t$ | set nodes | DP | compose | explicit hash of every fault combination |
 |---|---|---|---|---|---|---|
-| Steane, flagged | 19 | 2 | 7,405 | 0.012 s | 0.125 s | 0.002 s |
+| Steane, flagged | 19 | 2 | 7,405 | 0.011 s | 0.125 s | 0.002 s |
 | Golay [[23,1,7]], flagged | 67 | 1 | 11,591 | 0.022 s | 550 s | 0.004 s |
-| Surface-5, flagged | 65 | 2 | 322,470 | 0.708 s | 56.3 s | 0.023 s |
-| Golay, flagged | 67 | 2 | ~4e6 (no reordering) | 16.4 s | not completed | 0.087 s |
+| Surface-5, flagged | 65 | 2 | 322,470 | 0.66 s | 56.3 s | 0.023 s |
+| Golay, flagged | 67 | 2 | 705,953 | 3.2 s | not completed | 0.087 s |
 
 **What the numbers say.**
 
 * On every set where compose finishes, DP is faster, from about 2x (smallest sets) to about 25,000x (Golay, $t{=}1$:
-  550 s vs 0.022 s). On the $d{=}7,t{=}3$ ball it is 630x, on the flagged surface-5 set 80x. Sets that compose could not finish in 600 s are solved by DP in
-  seconds ($d{=}9$ ball 0.9 s, $d{=}9$ cosets 5 s).
+  550 s vs 0.022 s). On the $d{=}7,t{=}3$ ball it is 1,350x, on the flagged surface-5 set 85x. Sets that compose could not finish in 600 s are solved by DP in
+  seconds ($d{=}9$ ball 0.4 s, $d{=}9$ cosets 2 s), and the $d{=}13$, $t{=}4$ ball ($2.7\times10^9$ elements) in 106 s.
 * DP does not make the diagram method competitive with a plain hash of the fault combinations when the set is small
   enough to list (rows of (c), last column). Its advantage over explicit enumeration only appears for sets with $10^8$ or more
   elements (the large weight balls), and there only moderately: an explicit multi-pass hash needed 252 s on the
-  $d{=}11,t{=}4$ ball, against 113 s here.
-* The in-library DP over the *diagram of the ball* is slower on the largest ball than a layered construction that builds
-  $G$ directly from the per-qubit images (34.6 s for $d{=}11,t{=}4$ in an experimental harness, measured with another job
-  running). That construction needs to know that the set is "at most $t$ of these locations"; the DP does not. The
-  difference was not analysed.
+  $d{=}11,t{=}4$ ball, against 11.6 s here.
+* Table (c): the time in the DP column is `find_inequivalent_pair` alone. Building the fault set itself was far larger (e.g.
+  225 s for Golay, $t{=}2$ in the harness), so in a circuit-level analysis the check is not the dominant cost. The Golay,
+  $t{=}2$ row previously listed "~4e6" nodes, which was the node count of the unrestricted fault set; the set the check runs
+  on (all flags zero) has 705,953.
 * The multiplicity tests are identical in both methods; the timings above include them, and the large differences come from
   how $G$ is obtained (for compose, the separately timed substitution accounted for 99% or more of the time on the $d{=}7,t{=}3$
   ball and on Golay $t{=}1$).
 
+
+### 8.1 Why a first version of the DP was slower than a layered construction
+
+A first implementation memoised the image of every $(u,\ell)$ in a hash map and evaluated depth-first. On the
+$d{=}11,t{=}4$ ball it needed 113 s (175 s in the profiling run below), whereas a layered construction that builds $G$ directly
+from the per-qubit images ($G_j\leftarrow G_j\cup\bigcup_p(\pi(p)\oplus G_{j-1})$, which exists only for sets of that form) needed about
+24 s. Profiling the three evaluation orders in one program, each run alone, same machine, same ball, same shift/union code
+(`A` = memoised depth-first, `B` = layered per-qubit, `C` = level by level as in Section 3.5; `GC` = BuDDy garbage collections):
+
+| | node table | total | shifts | unions | GC runs / time | nodes in use at the end (incl. uncollected garbage) |
+|---|---|---|---|---|---|---|
+| A, memoised DFS | $2^{22}$ | 175.0 s | 38.5 s | 80.4 s | 223 / 102.1 s | 15.3 M |
+| B, layered | $2^{22}$ | 24.2 s | 5.9 s | 12.0 s | 35 / 5.0 s | 4.6 M |
+| C, level by level | $2^{22}$ | 13.0 s | 2.7 s | 3.9 s | 16 / 3.0 s | 4.6 M |
+| A, memoised DFS | $2^{25}$ | 10.3 s | 2.9 s | 3.9 s | 0 / 0 s | 22.2 M |
+| B, layered | $2^{25}$ | 21.5 s | 6.9 s | 11.8 s | 2 / 0.7 s | 8.5 M |
+| C, level by level | $2^{25}$ | 10.7 s | 3.0 s | 4.2 s | 0 / 0 s | 22.2 M |
+
+(The time of a shift or union includes any garbage collection it triggered, so the GC column overlaps the two before it. The
+rest of the total, about 3.5 s here, is the multiplicity test. A and C perform the same 1,646 shifts and 1,646 unions; B performs
+1,452 shifts and 1,936 unions.)
+
+What this shows.
+
+* **The cause was memory retention, not the number of operations.** The memoised DFS keeps 1,646 intermediate images alive
+  until the end; the node table had grown to 15 M nodes in use, against 2.4 M in the final $G$ (4.6 M for the layered construction, which
+  holds only $t+1$ layers). With a $2^{22}$-node table BuDDy had to garbage-collect and enlarge the table 223 times, 102 s of
+  the 175 s; every collection marks all live nodes. With a $2^{25}$-node table (no collection needed) the same code takes
+  10.3 s, which is also the time of the level-by-level version, and faster than the layered construction.
+* **The fix is the evaluation order.** Level by level, the DP holds the images of two adjacent levels only (at most 14
+  images at once in this run) and does not depend on the node-table size: 13.0 s at $2^{22}$, 10.7 s at $2^{25}$. This is the
+  version in the library.
+* **The per-operation work is smaller in the DP than in the layered construction** (shifts 2.7–3.0 s against 5.9–6.9 s,
+  unions 3.9–4.2 s against 11.8–12.0 s) although the operation counts are similar. Why was not investigated further.
+* The timings of a first-implementation run vary (113 s with the library build, 175 s in the profiling harness) because the
+  cost is driven by when BuDDy happens to collect; this is another symptom of the same cause.
 
 ## 9. Limitations and open points
 
@@ -311,5 +356,7 @@ and `|`. Time is that of `find_inequivalent_pair` only.
   be expensive. The measurements show where it is not.
 * The DP follows the level order of the *input* diagram. How much a better input order helps was not studied.
 * Reordering is paused, not exploited, inside the DP.
+* The levels of the set are held as a list of nodes per level; for a set whose diagram skips many levels, the number of
+  $(u,\ell)$ pairs, $M\le|f|+\mathrm{skip}(f)$, is the quantity that sets the memory of the downward pass.
 * For error sets small enough to list, hashing $(\sigma,\lambda)$ per element is far cheaper than any diagram method (table (c)).
   The diagram methods are for sets too large to list.
