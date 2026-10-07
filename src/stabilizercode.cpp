@@ -2,14 +2,18 @@
 //  StabilizerCode -- the symplectic basis, the change of coordinates it
 //  defines, and the inequivalent-pair decision procedure.
 //
-//  All of the linear algebra runs once, in the constructor. A query is then a
-//  fixed number of diagram operations plus O(k), whatever the error set holds.
+//  All of the linear algebra runs once, in the constructor. A query is then one
+//  pass over the diagram of the error set plus 2k projections of the relation;
+//  how large that is depends on the diagrams, not on the number of errors.
 // ===========================================================================
 
 #include "spbdd/stabilizercode.hpp"
 
+#include <cstdint>
 #include <stdexcept>
 #include <string>
+#include <unordered_map>
+#include <unordered_set>
 
 namespace spbdd {
 namespace {
@@ -290,6 +294,25 @@ StabilizerCode::StabilizerCode(PauliSpace space, const std::vector<std::string> 
         t[static_cast<std::size_t>(f_var(j))] = swap_xz(lxrow_[static_cast<std::size_t>(j)]);
     }
     tinv_ = invert(t);
+
+    // The image of each single-qubit Pauli in (syndrome, signature) coordinates.
+    // Variable v = 2q is X on qubit q and 2q + 1 is Z; its new b, c and f
+    // coordinates are the pairings with the partner vectors, exactly as in
+    // syndrome() and logical_signature(). The a block is not recorded: the
+    // quotient by S discards it, and it would be set only by destabilizer
+    // components that no query ever reads.
+    flips_.assign(static_cast<std::size_t>(n_vars), {});
+    for (int v = 0; v < n_vars; ++v) {
+        Row e(static_cast<std::size_t>(n_vars), 0);
+        e[static_cast<std::size_t>(v)] = 1;
+        std::vector<int> &fl = flips_[static_cast<std::size_t>(v)];
+        for (int i = 0; i < r_; ++i)
+            if (symplectic(e, grow_[static_cast<std::size_t>(i)])) fl.push_back(b_var(i));
+        for (int j = 0; j < k_; ++j) {
+            if (symplectic(e, lzrow_[static_cast<std::size_t>(j)])) fl.push_back(c_var(j));
+            if (symplectic(e, lxrow_[static_cast<std::size_t>(j)])) fl.push_back(f_var(j));
+        }
+    }
 }
 
 // ===========================================================================
@@ -426,15 +449,6 @@ Bdd StabilizerCode::to_code_coordinates(const Bdd &f) const
     return f.compose(subs);
 }
 
-StabilizerCode::Row StabilizerCode::from_code_coordinates(const Row &y) const
-{
-    const int n_vars = sp_.n_vars();
-    Row       e(static_cast<std::size_t>(n_vars), 0);
-    for (int v = 0; v < n_vars; ++v)
-        e[static_cast<std::size_t>(v)] = dot(tinv_[static_cast<std::size_t>(v)], y);
-    return e;
-}
-
 // ===========================================================================
 //  Inequivalent error pairs
 // ===========================================================================
@@ -444,11 +458,14 @@ StabilizerCode::Row StabilizerCode::from_code_coordinates(const Row &y) const
 //  exactly when their logical signatures differ. So the question is whether
 //  any syndrome carries two signatures.
 //
-//  In the transformed coordinates the stabilizer component occupies its own
-//  variables, so quotienting by S is just eliminating them, and what is left is
-//  the (syndrome, signature) relation. Testing that relation for
-//  single-valuedness would seem to need the 4^k signatures per syndrome; it
-//  does not. Two distinct signatures must differ in *some* bit, so it is enough
+//  Everything is decided on the (syndrome, signature) relation G of the set.
+//  There are two ways to build it, which return the identical diagram:
+//  PairMethod::Dp walks the diagram of the set once and never forms a XOR of
+//  variables; PairMethod::Compose rewrites the whole diagram into code
+//  coordinates and eliminates the stabilizer block. See docs/dp-image.md.
+//
+//  Testing G for single-valuedness would seem to need the 4^k signatures per
+//  syndrome; it does not. Two distinct signatures must differ in *some* bit, so it is enough
 //  to ask, one bit at a time, whether a syndrome admits both values of that
 //  bit. That is 2k projections rather than 4^k.
 
@@ -461,13 +478,155 @@ struct MultiTest {
 
 } // namespace
 
-bool StabilizerCode::has_inequivalent_pair(const PauliSet &errors) const
+// ---------------------------------------------------------------------------
+//  Two ways to the same relation G.
+// ---------------------------------------------------------------------------
+
+Bdd StabilizerCode::relation_by_compose(const Bdd &f) const
 {
-    return find_inequivalent_pair(errors).has_value();
+    std::vector<int> a_vars;
+    for (int i = 0; i < r_; ++i) a_vars.push_back(a_var(i));
+    return to_code_coordinates(f).exists(a_vars);   // quotient by S
+}
+
+namespace {
+
+// The image of a set of Paulis under  x |-> sum_v x_v w_v  (over GF(2)), by one
+// pass over the diagram of the set.
+//
+//   Let u be a node of the diagram, at level l, testing variable v. The elements
+//   it describes are the assignments of the variables at levels >= l, so
+//
+//        image(u, l) = image(low(u), l+1)  U  ( w_v  XOR  image(high(u), l+1) ).
+//
+//   A level the diagram skips is a variable the set does not constrain, so both
+//   of its values occur:  image(u, l) = H U (w_v XOR H)  with H = image(u, l+1).
+//   The false terminal has the empty image and the true terminal, past the last
+//   level, has the image { 0 }. "w XOR S" is S with the variables of w flipped,
+//   which is a substitution of each of those variables by its own negation.
+//
+// The diagrams being built live over the b, c and f variables, which are
+// distinct variables of the same manager as the set; the set is only ever read
+// through top_var / low / high, so the two never interfere.
+class ImageDp {
+public:
+    ImageDp(Manager &m, const std::vector<std::vector<int>> &flips, int first_var, int last_var)
+        : m_(m), flips_(flips), n_levels_(m.var_count())
+    {
+        zero_ = m.constant(true);
+        for (int v = first_var; v <= last_var; ++v) zero_ &= m.literal(v, false);
+    }
+
+    // Bottom-up, one level at a time. A depth-first memoised recursion would be
+    // equally correct, but it keeps the image of every (node, level) alive until
+    // the end -- far more nodes than the final answer, which is what makes the
+    // BDD package thrash on garbage collection and table growth. The image at
+    // level l only needs the images at level l + 1, so each level is computed
+    // from the one below and the one below is then released.
+    Bdd run(const Bdd &f)
+    {
+        using Level = std::vector<Bdd>;   // the (node, level) pairs reachable at one level
+        std::vector<Level>                              need(static_cast<std::size_t>(n_levels_) + 1);
+        std::vector<std::unordered_set<std::uint32_t>>  seen(static_cast<std::size_t>(n_levels_) + 1);
+        const auto add = [&](int l, const Bdd &u) {
+            if (u.is_false()) return;
+            if (seen[static_cast<std::size_t>(l)].insert(static_cast<std::uint32_t>(u.node())).second)
+                need[static_cast<std::size_t>(l)].push_back(u);
+        };
+        const auto tests_here = [&](const Bdd &u, int l) {
+            return !u.is_constant() && m_.var_to_level(u.top_var()) == l;
+        };
+
+        // Downward pass: which nodes does each level need?
+        add(0, f);
+        for (int l = 0; l < n_levels_; ++l)
+            for (const Bdd &u : need[static_cast<std::size_t>(l)]) {
+                if (tests_here(u, l)) {
+                    add(l + 1, u.low());
+                    add(l + 1, u.high());
+                } else {
+                    add(l + 1, u);
+                }
+            }
+
+        // Upward pass: image(u, l) from the images at level l + 1.
+        std::unordered_map<std::uint32_t, Bdd> next;
+        for (const Bdd &u : need[static_cast<std::size_t>(n_levels_)])
+            next.emplace(static_cast<std::uint32_t>(u.node()), zero_);
+        need[static_cast<std::size_t>(n_levels_)].clear();
+
+        const Bdd empty = m_.constant(false);
+        const auto below = [&](const std::unordered_map<std::uint32_t, Bdd> &img, const Bdd &x) -> const Bdd & {
+            return x.is_false() ? empty : img.at(static_cast<std::uint32_t>(x.node()));
+        };
+        for (int l = n_levels_ - 1; l >= 0; --l) {
+            const int                              v = m_.level_to_var(l);
+            std::unordered_map<std::uint32_t, Bdd> cur;
+            for (const Bdd &u : need[static_cast<std::size_t>(l)]) {
+                Bdd out;
+                if (tests_here(u, l)) {
+                    out = below(next, u.low()) | shifted(below(next, u.high()), v);
+                } else {
+                    const Bdd &h = below(next, u);
+                    out          = h | shifted(h, v);
+                }
+                cur.emplace(static_cast<std::uint32_t>(u.node()), std::move(out));
+            }
+            need[static_cast<std::size_t>(l)].clear();
+            next.swap(cur);   // the images of level l + 1 are released here
+        }
+        return f.is_false() ? empty : next.at(static_cast<std::uint32_t>(f.node()));
+    }
+
+private:
+    Bdd shifted(const Bdd &s, int v) const
+    {
+        if (static_cast<std::size_t>(v) >= flips_.size() || flips_[static_cast<std::size_t>(v)].empty())
+            return s;
+        std::vector<std::pair<int, Bdd>> subs;
+        for (int t : flips_[static_cast<std::size_t>(v)]) subs.emplace_back(t, !m_.literal(t, true));
+        return s.compose(subs);
+    }
+
+    Manager                                &m_;
+    const std::vector<std::vector<int>>    &flips_;
+    int                                     n_levels_;
+    Bdd                                     zero_;
+};
+
+// The DP reads the levels of the set while it builds other diagrams, so the
+// level structure must not move under it. Reordering is switched off for its
+// duration and put back afterwards.
+struct ReorderPause {
+    explicit ReorderPause(Manager &m) : m_(m), was_(m.dynamic_reordering())
+    {
+        if (was_) m_.set_dynamic_reordering(false);
+    }
+    ~ReorderPause()
+    {
+        if (was_) m_.set_dynamic_reordering(true);
+    }
+    Manager &m_;
+    bool     was_;
+};
+
+} // namespace
+
+Bdd StabilizerCode::relation_by_dp(const Bdd &f) const
+{
+    Manager     &m = sp_.manager();
+    ReorderPause pause(m);
+    ImageDp      dp(m, flips_, b_var(0), sp_.n_vars() - 1);   // b, c, f are contiguous: r .. 2n - 1
+    return dp.run(f);
+}
+
+bool StabilizerCode::has_inequivalent_pair(const PauliSet &errors, PairMethod method) const
+{
+    return find_inequivalent_pair(errors, method).has_value();
 }
 
 std::optional<StabilizerCode::Pair>
-StabilizerCode::find_inequivalent_pair(const PauliSet &errors) const
+StabilizerCode::find_inequivalent_pair(const PauliSet &errors, PairMethod method) const
 {
     if (&errors.space().manager() != &sp_.manager())
         throw std::logic_error("find_inequivalent_pair: the set belongs to a different PauliSpace");
@@ -476,12 +635,11 @@ StabilizerCode::find_inequivalent_pair(const PauliSet &errors) const
 
     Manager &m = sp_.manager();
 
-    std::vector<int> a_vars, lambda;
-    for (int i = 0; i < r_; ++i) a_vars.push_back(a_var(i));
+    std::vector<int> lambda;
     for (int j = 0; j < k_; ++j) { lambda.push_back(c_var(j)); lambda.push_back(f_var(j)); }
 
-    const Bdd transformed = to_code_coordinates(errors.bdd());
-    const Bdd relation    = transformed.exists(a_vars);   // quotient by S
+    const Bdd relation = (method == PairMethod::Dp) ? relation_by_dp(errors.bdd())
+                                                     : relation_by_compose(errors.bdd());
 
     // One bit at a time: the syndromes under which this signature bit takes
     // both values are syndromes carrying two distinct signatures.
@@ -497,21 +655,25 @@ StabilizerCode::find_inequivalent_pair(const PauliSet &errors) const
     // multi depends only on the syndrome variables, so any point of it names an
     // offending syndrome.
     auto bits_of = [&](const Bdd &f) {
-        const PauliSet         one = sp_.wrap(f);
-        const std::string      s   = *one.any_element();
-        const std::vector<Pauli> p = parse_pauli_string(s);
+        const PauliSet           one = sp_.wrap(f);
+        const std::string        s   = *one.any_element();
+        const std::vector<Pauli> p   = parse_pauli_string(s);
         return to_row(p);
     };
 
     const Row offending = bits_of(multi);
 
-    Bdd pinned_syndrome = m.constant(true);
-    for (int i = 0; i < r_; ++i)
-        pinned_syndrome &= m.literal(b_var(i), offending[static_cast<std::size_t>(b_var(i))] != 0);
+    std::vector<bool> syn(static_cast<std::size_t>(r_));
+    Bdd               pinned_syndrome = m.constant(true);
+    for (int i = 0; i < r_; ++i) {
+        const bool bit = offending[static_cast<std::size_t>(b_var(i))] != 0;
+        syn[static_cast<std::size_t>(i)] = bit;
+        pinned_syndrome &= m.literal(b_var(i), bit);
+    }
 
     // Two signatures from that fiber: take one, then exclude it and take
     // another. The multi test guarantees a second exists.
-    const Bdd fiber = relation & pinned_syndrome;
+    const Bdd fiber     = relation & pinned_syndrome;
     const Row first_sig = bits_of(fiber);
 
     Bdd first_cube = m.constant(true);
@@ -522,14 +684,20 @@ StabilizerCode::find_inequivalent_pair(const PauliSet &errors) const
     if (rest.is_false()) throw std::logic_error("find_inequivalent_pair: the multi test lied");
     const Row second_sig = bits_of(rest);
 
-    // Back to actual operators: pin syndrome and signature in the transformed
-    // set (before the quotient, so a stabilizer component is available), take
-    // any point, and map it back through T^-1.
+    // Back to actual operators. The relation has forgotten which operator
+    // produced each point, so ask the original set directly: the members of
+    // `errors` with this syndrome and this signature, both read in the
+    // original coordinates (with_syndrome / with_logical_signature never touch
+    // the transform), and take any one of them.
+    auto signature_bits = [&](const Row &sig) {
+        std::vector<bool> s;
+        for (int j = 0; j < k_; ++j) s.push_back(sig[static_cast<std::size_t>(c_var(j))] != 0);
+        for (int j = 0; j < k_; ++j) s.push_back(sig[static_cast<std::size_t>(f_var(j))] != 0);
+        return s;
+    };
     auto witness = [&](const Row &sig) {
-        Bdd cube = pinned_syndrome;
-        for (int v : lambda) cube &= m.literal(v, sig[static_cast<std::size_t>(v)] != 0);
-        const Row y = bits_of(transformed & cube);
-        return row_to_string(from_code_coordinates(y));
+        const PauliSet cls = errors & with_syndrome(syn) & with_logical_signature(signature_bits(sig));
+        return *cls.any_element();
     };
 
     Pair out;

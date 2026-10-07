@@ -74,6 +74,7 @@ public:
     // level-permuting methods, so unlike CUDD there is no method here that can
     // rewrite what a variable means.
     void set_dynamic_reordering(bool enabled);
+    bool dynamic_reordering() const { return dynamic_reordering_; }
     void reorder_now();
     int  var_to_level(int var) const;
     int  level_to_var(int level) const;
@@ -91,6 +92,7 @@ public:
     int check_zero_ref() const;
 
 private:
+    bool        dynamic_reordering_ = false;
     std::size_t baseline_nodes_ = 0;   // live nodes owned by the variable table
     std::size_t peak_nodes_     = 0;
 };
