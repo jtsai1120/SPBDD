@@ -82,7 +82,7 @@ public:
     //            node is  image(low) U shift_{w_v}(image(high)),  and a shift is
     //            a flip of a few variables. No variable is ever replaced by a
     //            XOR of others. Cost: one union and one shift per node of the
-    //            input, on diagrams over r + 2k variables; see docs/dp-image.md.
+    //            input, on diagrams over r + 2k variables; see docs/dp-image.tex.
     //
     //   Compose  The change of basis is applied to the whole diagram as one
     //            simultaneous substitution of 2n variables by XORs of variables,

@@ -1,0 +1,382 @@
+% 編譯方式： xelatex dp-image.tex（執行兩次以解析交叉引用）
+\documentclass[a4paper,11pt,fontset=none]{ctexart}
+
+% ---- 繁體中文字型：依序嘗試常見的繁體字型 -------------------------------
+\usepackage{xeCJK}
+\IfFontExistsTF{Noto Serif CJK TC}{%
+  \setCJKmainfont{Noto Serif CJK TC}\setCJKsansfont{Noto Sans CJK TC}\setCJKmonofont{Noto Sans CJK TC}}{%
+\IfFontExistsTF{Source Han Serif TC}{%
+  \setCJKmainfont{Source Han Serif TC}\setCJKsansfont{Source Han Sans TC}\setCJKmonofont{Source Han Sans TC}}{%
+\IfFontExistsTF{PMingLiU}{%
+  \setCJKmainfont{PMingLiU}\setCJKsansfont{Microsoft JhengHei}\setCJKmonofont{MingLiU}}{%
+\IfFontExistsTF{AR PL UMing TW}{%
+  \setCJKmainfont{AR PL UMing TW}\setCJKsansfont{AR PL UMing TW}\setCJKmonofont{AR PL UMing TW}}{%
+  \setCJKmainfont{Noto Serif CJK TC}}}}}
+
+\usepackage[margin=2.5cm]{geometry}
+\usepackage{amsmath,amssymb,amsthm}
+\usepackage{booktabs}
+\usepackage{enumitem}
+\usepackage{float}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+\usepackage{listings}
+\usepackage[hidelinks]{hyperref}
+
+\newcommand{\code}[1]{\texttt{\detokenize{#1}}}
+\renewcommand{\emph}[1]{\textbf{#1}}
+\setlength{\emergencystretch}{3em}
+\newcommand{\F}{\mathbb{F}}
+\newcommand{\E}{\mathcal{E}}
+\newcommand{\ra}{\mathrm{root}}
+\DeclareMathOperator{\var}{var}
+\DeclareMathOperator{\supp}{supp}
+\DeclareMathOperator{\lev}{level}
+\DeclareMathOperator{\skipc}{skip}
+\DeclareMathOperator{\low}{low}
+\DeclareMathOperator{\high}{high}
+
+\newtheorem{lemma}{引理}
+\newtheorem{theorem}{定理}
+\theoremstyle{definition}
+\newtheorem{definition}{定義}
+
+\floatname{algorithm}{演算法}
+\lstset{breaklines=true,basicstyle=\ttfamily\small,columns=fullflexible,keepspaces=true,frame=single,xleftmargin=1em,xrightmargin=1em}
+\algrenewcommand\algorithmicrequire{\textbf{輸入：}}
+\algrenewcommand\algorithmicensure{\textbf{輸出：}}
+\setlength{\parskip}{0.3em}
+
+\title{以錯誤集合決策圖上的動態規劃判定不等價錯誤對}
+\author{SPBDD 設計說明（\code{StabilizerCode::find_inequivalent_pair}，\code{PairMethod::Dp}）}
+\date{}
+
+\begin{document}
+\maketitle
+
+本文定義問題、說明方法、證明正確性、分析複雜度，並與原本的基底變換（compose）實作比較；compose 現在僅作為參考實作與基準測試之用，預設方法已改為動態規劃（DP）。第~\ref{sec:meas} 節給出量測數據，所有數字皆可由 \code{examples/pair_benchmark.cpp} 重現。
+
+%% =====================================================================
+\section{問題}\label{sec:problem}
+
+設 $S \le \mathcal P_n$ 為穩定子群（stabilizer group），有 $r$ 個獨立生成元 $g_1,\dots,g_r$，因此此碼有 $k=n-r$ 個邏輯量子位元。以不計相位的辛（symplectic）形式表示 Pauli 算符：$e=(x\mid z)\in\F_2^{2n}$，並沿用 SPBDD 的變數編號 $x_q=$ 變數 $2q$、$z_q=$ 變數 $2q+1$。辛內積記為
+\[
+\langle e,f\rangle = x_e\cdot z_f + z_e\cdot x_f \pmod 2 .
+\]
+
+取定邏輯算符代表元 $\bar X_1,\dots,\bar X_k,\bar Z_1,\dots,\bar Z_k\in N(S)$，滿足 $\langle\bar X_i,\bar Z_j\rangle=\delta_{ij}$ 且 $\langle\bar X_i,\bar X_j\rangle=\langle\bar Z_i,\bar Z_j\rangle=0$。定義兩個 $\F_2$-線性映射
+\[
+\sigma(e)=\bigl(\langle e,g_i\rangle\bigr)_{i=1}^{r}\in\F_2^{r},
+\qquad
+\lambda(e)=\bigl(\langle e,\bar Z_j\rangle_{j=1}^{k},\ \langle e,\bar X_j\rangle_{j=1}^{k}\bigr)\in\F_2^{2k},
+\]
+分別稱為\emph{症狀}（syndrome）與\emph{邏輯特徵}（logical signature），程式中對應 \code{syndrome()} 與 \code{logical_signature()}。兩者串接得到
+\[
+\pi=(\sigma,\lambda):\F_2^{2n}\to\F_2^{m},\qquad m=r+2k=n+k,
+\]
+即基底變換在「真正需要的座標」上的投影。
+
+\begin{definition}[不等價錯誤對問題]
+給定錯誤集合 $\E\subseteq\F_2^{2n}$（以 $2n$ 個變數上的 BDD 表示），判定是否存在 $e_1,e_2\in\E$ 使得 $e_1+e_2\in N(S)\setminus S$，並在存在時回傳這樣的一對。
+\end{definition}
+
+\begin{lemma}[成對判準]\label{lem:pair}
+對任意 $e_1,e_2\in\F_2^{2n}$，
+\[
+e_1+e_2\in N(S)\setminus S\iff \sigma(e_1)=\sigma(e_2)\ \wedge\ \lambda(e_1)\neq\lambda(e_2).
+\]
+\end{lemma}
+\begin{proof}
+$N(S)=\{f:\sigma(f)=0\}$。又對 $f\in N(S)$，$f$ 可寫成 $\sum_i a_i g_i+\sum_j(c_j\bar X_j+f_j\bar Z_j)$，其 $\bar X,\bar Z$ 的係數可藉由與配對元 $\bar Z_j,\bar X_j$ 取辛內積讀出，故 $f\in S\iff\lambda(f)=0$。由 $\sigma,\lambda$ 的線性性，$\sigma(e_1+e_2)=0$ 且 $\lambda(e_1+e_2)\neq0$ 等價於上述條件。
+\end{proof}
+
+於是定義\emph{關係}
+\[
+G(\E)=\pi(\E)=\{(\sigma(e),\lambda(e)):e\in\E\}\subseteq\F_2^{r}\times\F_2^{2k},
+\]
+則存在不等價錯誤對，若且唯若某個症狀 $s$ 在 $G$ 中對應到至少兩個不同的邏輯特徵。
+
+\begin{lemma}[$2k$ 個單一位元檢驗]\label{lem:bits}
+這樣的 $s$ 存在，若且唯若存在某個特徵位元 $v\in\{1,\dots,2k\}$ 使得（視為 $s$ 的函數）
+\[
+\bigl(\exists\lambda.\ G\wedge\lambda_v=0\bigr)\ \wedge\ \bigl(\exists\lambda.\ G\wedge\lambda_v=1\bigr)
+\]
+可滿足。
+\end{lemma}
+\begin{proof}
+兩個不同的特徵至少有一個位元不同；反之，若某症狀同時容許某一位元的兩種取值，它就有兩個不同的特徵。
+\end{proof}
+
+因此整個判定問題化為\emph{建構 $G(\E)$ 這個 $r+2k$ 個變數上的 BDD}；引理~\ref{lem:bits} 的 $2k$ 個檢驗對所有方法皆相同（程式中 \code{find_inequivalent_pair} 的 multiplicity 迴圈）。以下全部在討論這一步的代價。
+
+%% =====================================================================
+\section{Compose 方法（參考實作）}\label{sec:compose}
+
+把 $\{g_i,\bar X_j,\bar Z_j\}$ 補成辛基底（加入去穩定子 $d_i$），令 $T$ 為可逆的 $2n\times2n$ 矩陣，把 $e$ 送到座標 $(a\mid b\mid c\mid f)$，其中 $b=\sigma(e)$、$(c,f)=\lambda(e)$，$a$ 為與去穩定子配對的係數。$T(\E)$ 的特徵函數為 $\chi_\E\circ T^{-1}$，所以要對 $\chi_\E$ 的\emph{全部 $2n$ 個變數同時}代換：把變數 $y_v$ 代換成「$T^{-1}$ 第 $v$ 列所選出的新變數」的 XOR（\code{to_code_coordinates}），最後對 $a$ 區塊做存在量化（\code{relation_by_compose}）。
+
+這個代換的代價取決於\emph{結果}的大小，而結果大小與輸入大小無關。例：$f(x,y)=\bigwedge_i\neg y_i$ 只有 $n+2$ 個節點，但代換 $y_i:=x_i\oplus y_i$ 會把它變成相等函數 $\bigwedge_i(x_i\leftrightarrow y_i)$，在變數順序 $x_1..x_n,y_1..y_n$ 下至少需要 $2^n$ 個節點。基底變換的列若含很多個 1，就會在 $2n$ 個變數的尺度上發生這種情形，而穩定子區塊到最後才被丟棄。
+
+%% =====================================================================
+\section{DP 方法}\label{sec:dp}
+
+\subsection{想法}
+
+只需要\emph{像}（image）$\pi(\E)$，而 $\pi$ 是線性的。把 $e=\sum_{v=0}^{2n-1}e_v u_v$ 寫成單位向量 $u_v$ 的和（$v=2q$ 對應單量子位元 Pauli $X_q$，$v=2q+1$ 對應 $Z_q$），並令
+\[
+w_v=\pi(u_v)\in\F_2^{m}\quad(\text{變數 }v\text{ 的「翻轉向量」}),\qquad
+\pi(e)=\bigoplus_{v}e_v\,w_v .
+\]
+$\E$ 的 BDD 依層序（level order）對各變數做 Shannon 展開來列舉賦值，所以一個節點的像可以由其兩個子節點的像\emph{加上一個常數向量}得到，完全不必把某個變數改寫成其他變數的 XOR。
+
+\subsection{定義}
+
+設管理器的層為 $0,\dots,N-1$（$N=2n$），$\var(\ell)$ 為第 $\ell$ 層的變數。對 $\F_2^m$ 上的布林函數 $F$ 與向量 $w$，定義\emph{位移}（shift）
+\[
+(w\oplus F)(y)=F(y\oplus w),\qquad\text{即}\qquad w\oplus F=\{\,w\oplus t:t\in F\,\}.
+\]
+對 $\E$ 的 BDD 中的節點 $u$ 與層 $\ell\le N$，令 $\E_{u,\ell}$ 為：$u$ 所接受的、對第 $\ell,\dots,N-1$ 層變數的賦值之集合（$\ell$ 層以上的變數被忽略；被圖跳過的變數視為不受限制）。\emph{後綴像}（suffix image）定義為
+\[
+I(u,\ell)=\Bigl\{\bigoplus_{\ell'\ge\ell}e_{\var(\ell')}\,w_{\var(\ell')}\ :\ e\in\E_{u,\ell}\Bigr\}\subseteq\F_2^{m}.
+\]
+則 $G(\E)=I(\ra,0)$。
+
+\subsection{遞迴式}\label{sec:rec}
+
+令 $v=\var(\ell)$：
+\begin{center}
+\begin{tabular}{@{}ll@{}}
+\toprule
+情形 & $I(u,\ell)$\\
+\midrule
+$u=\bot$ & $\emptyset$\\
+$\ell=N$（$u=\top$） & $\{0\}$\\
+$u$ 是位於第 $\ell$ 層的節點 & $I(\low(u),\ell{+}1)\ \cup\ \bigl(w_v\oplus I(\high(u),\ell{+}1)\bigr)$\\
+其他（第 $\ell$ 層被跳過，或 $\ell<N$ 時 $u=\top$） & $I(u,\ell{+}1)\ \cup\ \bigl(w_v\oplus I(u,\ell{+}1)\bigr)$\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\begin{theorem}[正確性]\label{thm:correct}
+遞迴式計算出的就是 3.2 節所定義的 $I(u,\ell)$。特別地，$I(\ra,0)=\pi(\E)=G(\E)$。
+\end{theorem}
+\begin{proof}
+對 $N-\ell$ 做歸納。$\ell=N$ 時唯一的後綴賦值是空賦值，若 $u$ 接受它（$u=\top$）則像為 $\{0\}$，否則為 $\emptyset$。$\ell<N$ 時，依第 $\ell$ 層變數的取值 $b$ 切分 $\E_{u,\ell}$。若 $u$ 測試該變數，則 $b=0$ 的賦值恰為 $\E_{\low(u),\ell+1}$，貢獻的像是 $I(\low(u),\ell+1)$；$b=1$ 的賦值恰為 $\E_{\high(u),\ell+1}$，由 $\bigoplus$ 的線性性，其貢獻為這些像各自加上 $w_v$，即 $w_v\oplus(\cdot)$。若 $u$ 不測試該變數，則 $b$ 取兩值時剩下的限制條件同為 $\E_{u,\ell+1}$，得到最後一列。
+\end{proof}
+
+\subsection{位移只是重新標號}\label{sec:shift}
+
+$w\oplus F$ 可由 $F$ 的決策圖得到：對每個以 $\supp(w)$ 中變數為標籤的節點，交換其兩個子節點。這是節點上的一個雙射，且保持化簡性（reducedness）——兩節點相等若且唯若其像相等，節點冗餘若且唯若其像冗餘——因此
+\[
+\lvert w\oplus F\rvert=\lvert F\rvert\quad\text{（節點數完全相同）}.
+\]
+實作上以「把每個被翻轉的變數代換成它自己的否定」（\code{Bdd::compose}，代換為文字 $\neg y_t$）來表達，絕不使用「多個變數的 XOR」。
+
+\subsection{演算法}\label{sec:algo}
+
+遞迴式本身（對 $(u,\ell)$ 定義）：
+\begin{algorithm}[H]
+\caption{\textsc{Image}$(u,\ell)$：後綴像}
+\begin{algorithmic}[1]
+\If{$u=\bot$} \State \Return $\emptyset$ \EndIf
+\If{$\ell=N$} \State \Return $\{0\}$ \Comment{$m$ 個目標變數上的方塊 $y=0$} \EndIf
+\State $v\gets\var(\ell)$
+\If{$u$ 是節點且 $\lev(\mathrm{top}(u))=\ell$}
+  \State \Return \textsc{Image}$(\low(u),\ell{+}1)\ \cup\ \textsc{Shift}(\textsc{Image}(\high(u),\ell{+}1),w_v)$
+\Else \Comment{第 $\ell$ 層被跳過}
+  \State $H\gets$ \textsc{Image}$(u,\ell{+}1)$
+  \State \Return $H\cup\textsc{Shift}(H,w_v)$ \Comment{$w_v=0$ 時即為 $H$}
+\EndIf
+\end{algorithmic}
+\end{algorithm}
+
+函式庫實際採用\emph{逐層}（level by level）求值：
+
+\begin{algorithm}[H]
+\caption{逐層求值（函式庫所用）}
+\begin{algorithmic}[1]
+\State $\mathrm{need}[0]\gets\{\ra\}$
+\For{$\ell=0,\dots,N-1$} \Comment{向下掃描：哪些 $(u,\ell)$ 會被用到}
+  \State 把 $\mathrm{need}[\ell]$ 中每個 $u$ 的子節點（若第 $\ell$ 層被跳過則為 $u$ 本身）加入 $\mathrm{need}[\ell{+}1]$，略去 $\bot$
+\EndFor
+\State $\mathit{next}\gets\{(u,N)\mapsto\{0\}: u\in\mathrm{need}[N]\}$
+\For{$\ell=N-1$ \textbf{downto} $0$} \Comment{向上掃描}
+  \State $\mathit{cur}\gets\{(u,\ell)\mapsto\textsc{Image}(u,\ell)\text{ 由 }\mathit{next}\text{ 算出}: u\in\mathrm{need}[\ell]\}$
+  \State $\mathit{next}\gets\mathit{cur}$ \Comment{第 $\ell{+}1$ 層的像於此釋放}
+\EndFor
+\State $G\gets\mathit{next}[\ra]$
+\end{algorithmic}
+\end{algorithm}
+
+\begin{algorithm}[H]
+\caption{\code{find_inequivalent_pair}$(\E)$}
+\begin{algorithmic}[1]
+\State $G\gets\textsc{Image}(\ra(\E),0)$ \Comment{建在 $b,c,f$ 變數上}
+\State 對 $G$ 執行引理~\ref{lem:bits} 的 $2k$ 個單一位元檢驗
+\If{沒有任何檢驗成立} \State \Return 「無不等價對」\EndIf
+\State 取出有問題的症狀 $s$，以及纖維 $G\wedge(\sigma=s)$ 中兩個特徵 $\lambda_1\ne\lambda_2$
+\State \Return $\E\cap\code{with_syndrome}(s)\cap\code{with_logical_signature}(\lambda_i)$ 中的任意元素（$i=1,2$）
+\end{algorithmic}
+\end{algorithm}
+
+實作細節（\code{src/stabilizercode.cpp}）：
+\begin{itemize}[leftmargin=1.5em]
+\item \textbf{預先計算。}建構子對 $2n$ 個變數各存一份清單 \code{flips_}：列出 $w_v$ 為 1 的目標變數（\code{b_var}、\code{c_var}、\code{f_var}）。共 $2n\cdot m$ 次辛內積，$O(n^3)$ 位元運算，不超過建構子原本就要做的線性代數。去穩定子區塊不必儲存：它只影響 $a$ 座標，而 $a$ 在對 $S$ 取商時被丟棄。
+\item \textbf{目標變數}與 compose 路徑使用相同的 \code{b_var/c_var/f_var} 編號，所以兩條路徑回傳\emph{完全相同的正規（canonical）決策圖} $G$（已有測試），multiplicity 檢驗與見證（witness）的取出也由兩者共用。
+\item \textbf{見證}現在在原座標中讀出：\code{errors & with_syndrome(s)} \code{& with_logical_signature(lam)}，因為 $G$ 已忘記每個點是由哪個錯誤產生的。兩種方法皆如此。
+\item \textbf{重排序（reordering）。}DP 在讀取 $\E$ 的各層的同時建構其他決策圖；中途若動態重排序，層就會移動。因此 \code{ReorderPause} 在呼叫期間關閉動態重排序、結束後還原（為此新增了 \code{Manager::dynamic_}\allowbreak\code{reordering()}）。
+\item \textbf{求值順序。}遞迴式以逐層由下往上的方式計算，第 $\ell$ 層的像一算好，第 $\ell+1$ 層的像就立即釋放。深度優先加 memo 的遞迴會算出相同的圖，但會把每個 $(u,\ell)$ 的像一直留到結束；其代價見第~\ref{sec:why} 節（在最大的權重球上約為 10 倍）。
+\end{itemize}
+
+%% =====================================================================
+\section{複雜度}\label{sec:complexity}
+
+記號：$\lvert f\rvert$ 為輸入決策圖的節點數，$N=2n$，$m=r+2k$，
+\[
+\skipc(f)=\sum_{(u\to c)}\bigl(\lev(c)-\lev(u)-1\bigr)
+\]
+（對 $f$ 的所有邊求和，即被跳過的層數）。
+
+\begin{itemize}[leftmargin=1.5em]
+\item \textbf{$(u,\ell)$ 配對數。}每個被用到的 $(u,\ell)$ 若不是 $(u,\lev(u))$，就是落在「由某條通向 $u$ 的邊進入」的一串被跳過的層上。因此
+\[
+M\le\lvert f\rvert+\skipc(f)\le\lvert f\rvert\,(1+N),
+\]
+對很少跳層的圖，$M\approx\lvert f\rvert$。終端 $\top$ 至多貢獻 $N$ 個配對。
+\item \textbf{每個配對的工作量。}至多一次位移與一次聯集（union）。位移的結果與原圖節點數完全相同（第~\ref{sec:shift} 節）；就重新標號而言，理想情況下每個被翻轉的變數只需一趟掃描，但實作所用的 BuDDy \code{bdd_veccompose} 不保證線性，所以只宣稱「圖大小的多項式」。$A$ 與 $B$ 的聯集代價為 $O(\lvert A\rvert\,\lvert B\rvert)$，結果至多這麼多節點。
+\item \textbf{總計。}
+\[
+T_{\mathrm{DP}}=\sum_{(u,\ell)}O\Bigl(\lvert I(\mathrm{lo})\rvert\cdot\lvert I(\mathrm{hi})\rvert+\lvert w_v\rvert\,\lvert I(\mathrm{hi})\rvert\Bigr),
+\qquad
+S_{\mathrm{DP}}=O\Bigl(\max_\ell\sum_{u\text{ 位於第 }\ell\text{ 層}}\lvert I(u,\ell)\rvert\Bigr).
+\]
+（逐層求值只需同時保存相鄰兩層；深度優先的 memo 版本則需對\emph{所有} $(u,\ell)$ 求和。）每個 $I(u,\ell)$ 都是 $\F_2^m$ 的子集，故每張圖至多 $2^m$ 個點，且 $I(\ra,0)=G$。此界對後綴像是\emph{輸出敏感}的：只要 $\E$ 各後綴的像在 $(\sigma,\lambda)$ 空間中仍保持結構化，它就小；一般情形沒有先驗的多項式界——本文並不宣稱此判定問題一般而言是易解的。
+\item \textbf{Multiplicity 檢驗}（共用）：$2k$ 輪，每輪兩次合取、兩次對 $2k$ 個變數的量化，各為 $O(\lvert G\rvert)$（不計 apply 的代價）。在多數量測中相對於建構 $G$ 都很小；$d{=}11,t{=}4$ 的權重球上約 3.5 秒，已占總時間的約三分之一，但仍遠小於 compose 的代換。
+\item \textbf{Compose 路徑}（比較用）：對 $N$ 個變數做一次同時代換，每個代入的 XOR 長度總和等於 $T^{-1}$ 中 1 的個數（至多 $N^2$），之後再做 $\exists a$。其執行時間是被代換後、位於 $2n$ 個變數上的決策圖大小的函數，可以比 $\lvert f\rvert$ 與 $\lvert G\rvert$ 大指數倍（第~\ref{sec:compose} 節）。
+\end{itemize}
+
+DP 在實務上獲勝的一句話理由：兩種方法最終都得到 $r+2k=n+k$ 個變數上的同一個 $G$，但 compose 必須經過一張由 XOR 耦合的、$2n$ 個變數上的決策圖，而 DP 只持有 $n+k$ 個目標變數上的圖，並且只以重新標號在它們之間移動。
+
+%% =====================================================================
+\section{與逐位置建構的關係}
+
+若錯誤集合本身就是由小集合的和建出來的——「至多 $t$ 個位置，每個位置貢獻少數幾種 Pauli 之一」——則像也可以用分層集合建構：
+\[
+G_j\leftarrow G_j\cup\bigcup_p\bigl(\pi(p)\oplus G_{j-1}\bigr),
+\]
+完全不需要輸入決策圖。在權重球上，該建構與 DP 得到的 $G$ 相同（$G$ 是正規的，節點數一致）。DP 不需要知道 $\E$ 是怎麼建出來的，因此適用於\emph{任意}的 \code{PauliSet}。
+
+%% =====================================================================
+\section{API 變更}
+
+\begin{lstlisting}[language=C++]
+enum class StabilizerCode::PairMethod { Dp, Compose };
+bool has_inequivalent_pair (const PauliSet&, PairMethod = PairMethod::Dp) const;
+std::optional<Pair> find_inequivalent_pair(const PauliSet&,
+                                           PairMethod = PairMethod::Dp) const;
+bool Manager::dynamic_reordering() const;     // 新增，唯讀
+\end{lstlisting}
+
+compose 的實作保留為 \code{PairMethod::Compose}，作為參考實作與基準測試之用。
+
+\section{測試}
+
+\code{test/stabilizercode_test.cpp} 的「the DP and the compose route agree」一節：對位元翻轉碼、五量子位元碼與 Steane 碼各取 60 個隨機陪集（coset）聯集（安全與不安全的集合都會出現），比較兩種方法的判定結果，並獨立驗證兩者回傳的每個見證（屬於該集合、症狀相同、特徵不同、乘積落在 $N(S)\setminus S$）；已知答案的權重球；開啟動態重排序時的行為。所有既有測試（對所有子集的暴力驗證、乘積式 $E{*}E\cap(N(S)\setminus S)$）不經修改全部通過。
+
+%% =====================================================================
+\section{量測}\label{sec:meas}
+
+所有執行：同一個雲端容器（2 vCPU、7~GB）、\code{g++ -O2}、BuDDy 節點表 $2^{22}$ 個節點／快取 $2^{20}$、預設變數順序、不做重排序，每列只跑一次（無重複）。DP 的數字是第~\ref{sec:algo} 節逐層版本、單獨在機器上執行的結果；compose 的數字是較早量到的（部分執行時另有一個工作同時在跑）。「compose」指 \code{PairMethod::Compose}，「DP」指 \code{PairMethod::Dp}；兩者都跑完的列，判定結果一律相同。有時兩個核心上同時各跑一個工作，會讓兩者都變慢，因此時間請以約兩倍的誤差來讀。節點表大小的影響同樣重要：在 BuDDy 較小的預設表（$2^{20}$）上，compose 在 $d{=}7,t{=}3$ 600 秒內跑不完，但在 $2^{22}$ 上只需 111 秒。
+
+\paragraph{(a) 權重球。}旋轉表面碼上所有權重 $\le t$ 的 Pauli（答案：無不等價對，因為 $d>2t$）。
+\begin{center}
+\begin{tabular}{@{}rrrrrr@{}}
+\toprule
+$d$ & $t$ & $\lvert\E\rvert$ & 圖節點數 & DP & compose\\
+\midrule
+5 & 2 & 2,776 & 139 & 0.003 s & 0.026 s\\
+7 & 2 & $1.07\times10^4$ & 283 & 0.016 s & 1.55 s\\
+7 & 3 & $5.08\times10^5$ & 369 & 0.082 s & 111.1 s\\
+9 & 3 & $2.33\times10^6$ & 625 & 0.37 s & 600 s 內未完成\\
+9 & 4 & $1.37\times10^8$ & 771 & 2.5 s & 未執行\\
+11 & 4 & $6.96\times10^8$ & 1,171 & 11.6 s & 未執行\\
+13 & 4 & $2.7\times10^9$ & 未量測 & 106 s & 未執行\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\paragraph{(b) 無結構集合。}同一個碼上，取 $K$ 個隨機陪集的聯集，每個陪集有 $G$ 個權重 $\le W$ 的隨機生成元（\code{pair_benchmark cosets}；固定隨機種子）。四列的答案皆為無不等價對。
+\begin{center}
+\begin{tabular}{@{}rrrrrr@{}}
+\toprule
+$d$ & $K,G,W$ & $\lvert\E\rvert$ & 圖節點數 & DP & compose\\
+\midrule
+5 & 20, 6, 4 & 1,280 & 7,265 & 0.017 s & 0.289 s\\
+7 & 50, 8, 5 & $1.28\times10^4$ & 113,772 & 0.53 s & 65.2 s\\
+9 & 100, 8, 5 & $2.56\times10^4$ & 387,759 & 2.1 s & 600 s 內未完成\\
+11 & 300, 8, 5 & $7.67\times10^4$ & 1,569,997 & 20.5 s & 未執行\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\paragraph{(c) 電路的錯誤集合。}一輪帶旗標（flag）量子位元的症狀萃取中，所有故障（至多 $t$ 個故障位置；輸入資料錯誤也算故障）且限於旗標全為 0 的輸出，並把每個測量記錄以 Pauli 分量保留在被測量的量子位元上（因此交給 \code{StabilizerCode} 的碼是 $S\otimes I$ 再加上每個被測量位元一個單量子位元生成元，共 $N=n+\#\text{輔助}+\#\text{旗標}$ 個量子位元）。這些資料由包在函式庫外的獨立實驗程式產生，不在本儲存庫的程式碼中；故障集合以 \code{cx}／\code{fault_inject} 與 \code{|} 建構。時間僅計 \code{find_inequivalent_pair}。
+\begin{center}
+\begin{tabular}{@{}lrrrrrr@{}}
+\toprule
+電路 & $N$ & $t$ & 集合節點數 & DP & compose & 顯式雜湊\\
+\midrule
+Steane，帶旗標 & 19 & 2 & 7,405 & 0.011 s & 0.125 s & 0.002 s\\
+Golay $[[23,1,7]]$，帶旗標 & 67 & 1 & 11,591 & 0.022 s & 550 s & 0.004 s\\
+Surface-5，帶旗標 & 65 & 2 & 322,470 & 0.66 s & 56.3 s & 0.023 s\\
+Golay，帶旗標 & 67 & 2 & 705,953 & 3.2 s & 未完成 & 0.087 s\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\paragraph{數字說明了什麼。}
+\begin{itemize}[leftmargin=1.5em]
+\item 凡是 compose 跑得完的集合，DP 都比較快，從約 2 倍（最小的集合）到約 25,000 倍（Golay，$t{=}1$：550 s 對 0.022 s）。$d{=}7,t{=}3$ 的球為 1,350 倍，帶旗標的 surface-5 集合為 85 倍。compose 600 秒內跑不完的集合，DP 幾秒內解出（$d{=}9$ 的球 0.4 s、$d{=}9$ 的陪集聯集 2 s），$d{=}13,t{=}4$ 的球（$2.7\times10^9$ 個元素）也只要 106 s。
+\item 當集合小到可以逐一列出時，DP 並不會讓決策圖方法贏過直接對故障組合做雜湊（(c) 的「顯式雜湊」一欄）。它相對於顯式列舉的優勢，只在元素數 $\ge10^8$ 的集合（大的權重球）上才出現，而且只是中等幅度：顯式的多趟雜湊在 $d{=}11,t{=}4$ 的球上需要 252 s，這裡是 11.6 s。
+\item 表 (c) 的 DP 欄只計 \code{find_inequivalent_pair}。建構故障集合本身要大得多（例如實驗程式中 Golay、$t{=}2$ 要 225 s），所以在電路層級的分析中，檢驗並不是最主要的成本。Golay、$t{=}2$ 那一列先前寫成「$\sim4\times10^6$」個節點，那其實是未過濾的故障集合的節點數；真正被檢驗的集合（旗標全為 0）有 705,953 個。
+\item 兩種方法的 multiplicity 檢驗完全相同，上述時間皆已包含；巨大的差異來自 $G$ 的取得方式（對 compose 而言，另外單獨計時的代換步驟在 $d{=}7,t{=}3$ 的球與 Golay $t{=}1$ 上占 99\% 以上的時間）。
+\end{itemize}
+
+\subsection{為什麼最初的 DP 版本比逐層建構慢}\label{sec:why}
+
+最初的實作用雜湊表 memo 住每個 $(u,\ell)$ 的像，並採深度優先求值。在 $d{=}11,t{=}4$ 的球上需要 113 s（下面的剖析執行為 175 s），而直接由逐量子位元的像建構 $G$ 的分層建構（$G_j\leftarrow G_j\cup\bigcup_p(\pi(p)\oplus G_{j-1})$，只適用於具有這種形式的集合）約需 24 s。把三種求值順序放進同一個程式剖析，每次單獨執行，同一台機器、同一個球、同樣的位移／聯集程式碼（A = memo 深度優先，B = 分層逐量子位元，C = 逐層，即第~\ref{sec:algo} 節；GC = BuDDy 垃圾回收）：
+\begin{center}
+\small
+\begin{tabular}{@{}llrrrrr@{}}
+\toprule
+ & 節點表 & 總時間 & 位移 & 聯集 & GC 次數／時間 & 使用中節點（含垃圾）\\
+\midrule
+A，memo 深度優先 & $2^{22}$ & 175.0 s & 38.5 s & 80.4 s & 223 ／ 102.1 s & 15.3 M\\
+B，分層 & $2^{22}$ & 24.2 s & 5.9 s & 12.0 s & 35 ／ 5.0 s & 4.6 M\\
+C，逐層 & $2^{22}$ & 13.0 s & 2.7 s & 3.9 s & 16 ／ 3.0 s & 4.6 M\\
+A，memo 深度優先 & $2^{25}$ & 10.3 s & 2.9 s & 3.9 s & 0 ／ 0 s & 22.2 M\\
+B，分層 & $2^{25}$ & 21.5 s & 6.9 s & 11.8 s & 2 ／ 0.7 s & 8.5 M\\
+C，逐層 & $2^{25}$ & 10.7 s & 3.0 s & 4.2 s & 0 ／ 0 s & 22.2 M\\
+\bottomrule
+\end{tabular}
+\end{center}
+（「使用中節點」為結束時 BuDDy 節點表中的使用量，含尚未回收的垃圾。位移或聯集的時間含它所觸發的垃圾回收，所以 GC 欄與前兩欄重疊。總時間中其餘的約 3.5 s 是 multiplicity 檢驗。A 與 C 做了相同的 1,646 次位移與 1,646 次聯集；B 做了 1,452 次位移與 1,936 次聯集。）
+
+由此可知：
+\begin{itemize}[leftmargin=1.5em]
+\item \textbf{原因是記憶體被保留，不是運算次數。}memo 深度優先把 1,646 個中間像一直留到結束；節點表長到 15 M 個節點在使用中，而最終的 $G$ 只有 2.4 M（只保留 $t+1$ 層的分層建構為 4.6 M）。節點表只有 $2^{22}$ 時，BuDDy 必須垃圾回收並擴表 223 次，占了 175 s 中的 102 s；每次回收都要標記所有存活節點。節點表開到 $2^{25}$（不需任何回收）時，同一份程式只要 10.3 s，與逐層版本相同，也比分層建構快。
+\item \textbf{解法是求值順序。}逐層求值時 DP 只持有相鄰兩層的像（此次執行中同時至多 14 個），且與節點表大小無關：$2^{22}$ 時 13.0 s，$2^{25}$ 時 10.7 s。這就是函式庫中的版本。
+\item \textbf{DP 每次運算的工作量比分層建構小}（位移 2.7--3.0 s 對 5.9--6.9 s，聯集 3.9--4.2 s 對 11.8--12.0 s），雖然運算次數相近。原因尚未進一步調查。
+\item 最初版本的執行時間會有波動（函式庫建置版本為 113 s，剖析程式為 175 s），因為成本取決於 BuDDy 何時剛好進行回收；這是同一個原因的另一個症狀。
+\end{itemize}
+
+%% =====================================================================
+\section{限制與未解之處}
+
+\begin{itemize}[leftmargin=1.5em]
+\item 後綴像沒有多項式界；後綴像在 $(\sigma,\lambda)$ 空間中不具結構的集合仍可能很昂貴。量測顯示了哪些情形不會如此。
+\item DP 沿用\emph{輸入}決策圖的層序。更好的輸入順序能帶來多大幫助尚未研究。
+\item 重排序在 DP 期間只是暫停，沒有被利用。
+\item 集合的各層以「每層一個節點清單」保存；若某個集合的決策圖大量跳層，$(u,\ell)$ 配對數 $M\le\lvert f\rvert+\skipc(f)$ 就決定了向下掃描所需的記憶體。
+\item 當錯誤集合小到可以列出時，對每個元素直接雜湊 $(\sigma,\lambda)$ 比任何決策圖方法都便宜（表 (c)）。決策圖方法是為了大到無法列出的集合而設計的。
+\end{itemize}
+
+\end{document}

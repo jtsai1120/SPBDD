@@ -462,7 +462,7 @@ Bdd StabilizerCode::to_code_coordinates(const Bdd &f) const
 //  There are two ways to build it, which return the identical diagram:
 //  PairMethod::Dp walks the diagram of the set once and never forms a XOR of
 //  variables; PairMethod::Compose rewrites the whole diagram into code
-//  coordinates and eliminates the stabilizer block. See docs/dp-image.md.
+//  coordinates and eliminates the stabilizer block. See docs/dp-image.tex.
 //
 //  Testing G for single-valuedness would seem to need the 4^k signatures per
 //  syndrome; it does not. Two distinct signatures must differ in *some* bit, so it is enough
