@@ -134,6 +134,8 @@ $\E$ 的 BDD 依層序（level order）對各變數做 Shannon 展開來列舉�
 \[
 (w\oplus F)(y)=F(y\oplus w),\qquad\text{即}\qquad w\oplus F=\{\,w\oplus t:t\in F\,\}.
 \]
+\paragraph{決策圖的記號。}BDD 有兩個\emph{終端節點}（terminal）：$\top$（讀作 top，「真」終端）與 $\bot$（讀作 bottom，「假」終端）。從根節點沿著各變數的取值往下走，若走到 $\top$，表示這組賦值\emph{屬於}集合 $\E$；若走到 $\bot$，表示\emph{不屬於}。所以 $\bot$ 代表空集合 $\emptyset$（沒有任何賦值被接受），$\top$ 則代表「剩下的變數取什麼值都被接受」。對非終端節點 $u$，$\mathrm{top}(u)$ 是 $u$ 所測試的變數（注意這個 $\mathrm{top}$ 是函數名稱，與終端 $\top$ 無關），$\low(u)$ 與 $\high(u)$ 分別是該變數取 $0$ 與取 $1$ 時所走向的子節點。$\oplus$ 表示 $\F_2$ 上的加法（位元 XOR）。
+
 對 $\E$ 的 BDD 中的節點 $u$ 與層 $\ell\le N$，令 $\E_{u,\ell}$ 為：$u$ 所接受的、對第 $\ell,\dots,N-1$ 層變數的賦值之集合（$\ell$ 層以上的變數被忽略；被圖跳過的變數視為不受限制）。\emph{後綴像}（suffix image）定義為
 \[
 I(u,\ell)=\Bigl\{\bigoplus_{\ell'\ge\ell}e_{\var(\ell')}\,w_{\var(\ell')}\ :\ e\in\E_{u,\ell}\Bigr\}\subseteq\F_2^{m}.
@@ -144,14 +146,14 @@ I(u,\ell)=\Bigl\{\bigoplus_{\ell'\ge\ell}e_{\var(\ell')}\,w_{\var(\ell')}\ :\ e\
 
 令 $v=\var(\ell)$：
 \begin{center}
-\begin{tabular}{@{}ll@{}}
+\begin{tabular}{@{}p{0.45\textwidth}l@{}}
 \toprule
 情形 & $I(u,\ell)$\\
 \midrule
 $u=\bot$ & $\emptyset$\\
 $\ell=N$（$u=\top$） & $\{0\}$\\
 $u$ 是位於第 $\ell$ 層的節點 & $I(\low(u),\ell{+}1)\ \cup\ \bigl(w_v\oplus I(\high(u),\ell{+}1)\bigr)$\\
-其他（第 $\ell$ 層被跳過，或 $\ell<N$ 時 $u=\top$） & $I(u,\ell{+}1)\ \cup\ \bigl(w_v\oplus I(u,\ell{+}1)\bigr)$\\
+其他（第 $\ell$ 層被跳過，或 $\ell<N$ 時 $u=\top$，後者表示剩下的變數全部不受限制） & $I(u,\ell{+}1)\ \cup\ \bigl(w_v\oplus I(u,\ell{+}1)\bigr)$\\
 \bottomrule
 \end{tabular}
 \end{center}
