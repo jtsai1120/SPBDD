@@ -250,7 +250,7 @@ int main()
         CHECK(code.has_inequivalent_pair(code.normalizer()));
     }
 
-    SECTION("the DP and the compose route agree");
+    SECTION("DP, compose and square agree");
     {
         // Same relation, two constructions. Random unions of cosets are sets
         // with no structure for either route to lean on.
@@ -283,9 +283,11 @@ int main()
                 }
                 const auto dp  = code.find_inequivalent_pair(e, StabilizerCode::PairMethod::Dp);
                 const auto cmp = code.find_inequivalent_pair(e, StabilizerCode::PairMethod::Compose);
+                const auto sq  = code.find_inequivalent_pair(e, StabilizerCode::PairMethod::Square);
                 if (dp.has_value() != cmp.has_value()) verdicts = false;
+                if (dp.has_value() != sq.has_value()) verdicts = false;
                 dp.has_value() ? ++unsafe : ++safe;
-                for (const auto *r : {&dp, &cmp}) {
+                for (const auto *r : {&dp, &cmp, &sq}) {
                     if (!r->has_value()) continue;
                     const auto &p = **r;
                     const std::string prod = pauli_string_to_text(
@@ -297,7 +299,7 @@ int main()
                         witnesses = false;
                 }
             }
-            CHECK_AT(verdicts, (std::string(cs.name) + ": DP and compose give the same verdict").c_str());
+            CHECK_AT(verdicts, (std::string(cs.name) + ": DP, compose and square give the same verdict").c_str());
             CHECK_AT(witnesses, (std::string(cs.name) + ": every witness is a genuine pair").c_str());
             std::printf("  ..    %s: %d unsafe / %d safe random sets\n", cs.name, unsafe, safe);
         }
@@ -310,6 +312,7 @@ int main()
             const bool     want = (2 * t >= 3);
             CHECK_AT(code.has_inequivalent_pair(ball, StabilizerCode::PairMethod::Dp) == want, "DP on a weight ball");
             CHECK_AT(code.has_inequivalent_pair(ball, StabilizerCode::PairMethod::Compose) == want, "compose on a weight ball");
+            CHECK_AT(code.has_inequivalent_pair(ball, StabilizerCode::PairMethod::Square) == want, "square on a weight ball");
         }
 
         // The DP must leave the reordering switch as it found it, and must give

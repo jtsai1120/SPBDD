@@ -90,7 +90,15 @@ public:
     //            as the reference implementation and for benchmarking: its cost
     //            is governed by the size of the *result* of the substitution,
     //            which can be vastly larger than either the input or G.
-    enum class PairMethod { Dp, Compose };
+    //
+    //   Square   Does not build G at all. Two members multiply into a logical
+    //            operator iff  E * E  meets  N(S) \ S,  so: the sumset E * E
+    //            (operator*), N(S) and S as conjunctions of parity checks
+    //            (normalizer(), group()), one difference and one intersection.
+    //            Experimental (branch exp/square-product); its cost is governed
+    //            by the diagrams of E * E and of N(S) \ S, the latter of which
+    //            does not depend on E at all. See docs/square-product.tex.
+    enum class PairMethod { Dp, Compose, Square };
 
     bool has_inequivalent_pair(const PauliSet &errors, PairMethod method = PairMethod::Dp) const;
 
@@ -128,6 +136,9 @@ private:
     // gets substituted -- and T is not an involution, which is why it is
     // inverted explicitly at construction.
     Bdd to_code_coordinates(const Bdd &f) const;
+
+    // PairMethod::Square, start to finish (witness included).
+    std::optional<Pair> find_pair_by_square(const PauliSet &errors) const;
 
     PauliSpace sp_;
     int        r_ = 0;

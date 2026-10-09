@@ -633,6 +633,8 @@ StabilizerCode::find_inequivalent_pair(const PauliSet &errors, PairMethod method
     if (k_ == 0) return std::nullopt;   // no logical operators, so no such pair
     if (errors.is_empty()) return std::nullopt;
 
+    if (method == PairMethod::Square) return find_pair_by_square(errors);
+
     Manager &m = sp_.manager();
 
     std::vector<int> lambda;
@@ -703,6 +705,43 @@ StabilizerCode::find_inequivalent_pair(const PauliSet &errors, PairMethod method
     Pair out;
     out.first            = witness(first_sig);
     out.second           = witness(second_sig);
+    out.syndrome         = syndrome(out.first);
+    out.signature_first  = logical_signature(out.first);
+    out.signature_second = logical_signature(out.second);
+    return out;
+}
+
+// ===========================================================================
+//  PairMethod::Square
+// ===========================================================================
+//
+//  e1 e2 is a logical operator iff it lies in N(S) \ S, and the set of all
+//  such products is E * E. So
+//
+//      some pair in E is inequivalent   <=>   (E * E) & (N(S) \ S)  is nonempty
+//
+//  with E * E built by the sumset (operator*), N(S) and S by parity checks
+//  (normalizer(), group()), and no change of coordinates anywhere. Nothing of
+//  the syndrome / signature relation is formed, so the witness comes from the
+//  logical operator itself: pick any L in the intersection; then E & (E * L)
+//  is the set of e1 in E with e1 L in E, and it is nonempty by construction.
+//  E * {L} is a shift by a constant vector, linear in the diagram of E.
+
+std::optional<StabilizerCode::Pair> StabilizerCode::find_pair_by_square(const PauliSet &errors) const
+{
+    const PauliSet square  = errors * errors;          // E * E
+    const PauliSet logical = normalizer() - group();   // N(S) \ S
+    const PauliSet hit     = square & logical;
+    if (hit.is_empty()) return std::nullopt;
+
+    const std::string l       = *hit.any_element();
+    const PauliSet    partner = errors & (errors * sp_.from(l));
+    const auto        first   = partner.any_element();
+    if (!first) throw std::logic_error("find_inequivalent_pair: the square test lied");
+
+    Pair out;
+    out.first  = *first;
+    out.second = pauli_string_to_text(pauli_mul(parse_pauli_string(out.first), parse_pauli_string(l)));
     out.syndrome         = syndrome(out.first);
     out.signature_first  = logical_signature(out.first);
     out.signature_second = logical_signature(out.second);

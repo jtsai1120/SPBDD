@@ -1,6 +1,7 @@
 // ===========================================================================
 //  dp_vs_explicit: the DP of StabilizerCode::find_inequivalent_pair against an
-//  explicit baseline, in time and in peak memory.
+//  explicit baseline and against the product (square) method, in time and in
+//  peak memory.
 //
 //      dp_vs_explicit <scenario...> <method>
 //
@@ -13,6 +14,10 @@
 //
 //    methods
 //      dp                          StabilizerCode::find_inequivalent_pair, PairMethod::Dp
+//      square                      PairMethod::Square, run step by step with a timer on each step:
+//                                  E*E (operator*), N(S) (normalizer), S (group), N(S)\S,
+//                                  (E*E) & (N(S)\S), and the witness when there is one
+//      square-nf                   variant: (E*E) & N(S) first, then minus S; N(S)\S is never formed
 //      explicit <cap_MB> [P0]      enumerate every element, keep a hash table sigma -> set of
 //                                  lambda values seen, and stop when some sigma has two. The
 //                                  table is capped at <cap_MB>; if it would exceed the cap the
@@ -25,6 +30,9 @@
 //  receives only the diagram of the set. Both are single-threaded.
 //  Output: verdict, wall time, peak resident memory of the whole process (the DP is run with the
 //  BuDDy table of 2^22 nodes used by every other benchmark, which is part of its resident memory).
+//
+//  Environment: SPBDD_NODES_LOG2, SPBDD_CACHE_LOG2 set the BuDDy node table / operator cache of
+//  the diagram methods (default 22 / 20).
 //
 //  Build:  g++ -std=c++17 -O2 -Iinclude examples/dp_vs_explicit.cpp build/libspbdd.a -lm
 // ===========================================================================
@@ -340,13 +348,14 @@ int main(int argc, char **argv)
 {
     auto usage = [&]() {
         std::fprintf(stderr,
-                     "usage: %s ball <d> <t>                 (dp | explicit <cap_MB>)\n"
-                     "       %s region <d> <rows> <cols>     (dp | explicit <cap_MB>)\n"
-                     "       %s regiont <d> <rows> <cols> <t> (dp | explicit <cap_MB>)\n"
-                     "       %s cosets <d> <K> <G> <W>       (dp | explicit <cap_MB>)\n",
+                     "usage: %s ball <d> <t>                 (dp | square | square-nf | explicit <cap_MB>)\n"
+                     "       %s region <d> <rows> <cols>     (dp | square | square-nf | explicit <cap_MB>)\n"
+                     "       %s regiont <d> <rows> <cols> <t> (dp | square | square-nf | explicit <cap_MB>)\n"
+                     "       %s cosets <d> <K> <G> <W>       (dp | square | square-nf | explicit <cap_MB>)\n",
                      argv[0], argv[0], argv[0], argv[0]);
         return 2;
     };
+    std::setvbuf(stdout, nullptr, _IOLBF, 0);   // keep the step lines of a run killed by a timeout
     if (argc < 4) return usage();
     const std::string scenario = argv[1];
     const int         nargs = scenario == "ball" ? 2 : scenario == "region" ? 3 : scenario == "regiont" ? 4 : scenario == "cosets" ? 4 : -1;
@@ -361,9 +370,15 @@ int main(int argc, char **argv)
     // uses the library only to compute syndromes, so it gets a small one and its
     // resident memory is then essentially its own hash table.
     ManagerConfig cfg;
-    const bool    is_dp = (method == "dp");
+    const bool    is_dp = (method == "dp" || method == "square" || method == "square-nf");
     cfg.initial_nodes = is_dp ? (1u << 22) : (1u << 14);
     cfg.cache_size    = is_dp ? (1u << 20) : (1u << 12);
+    // SPBDD_NODES_LOG2 / SPBDD_CACHE_LOG2 override the BuDDy node table and operator cache of the
+    // diagram methods (the "large" configuration of the measurements is 24 / 23).
+    if (is_dp) {
+        if (const char *e = std::getenv("SPBDD_NODES_LOG2")) cfg.initial_nodes = 1u << std::atoi(e);
+        if (const char *e = std::getenv("SPBDD_CACHE_LOG2")) cfg.cache_size = 1u << std::atoi(e);
+    }
     PauliSpace           sp(n, cfg);
     const StabilizerCode code(sp, surface(d));
     const double         base = rss_mb();
@@ -371,7 +386,7 @@ int main(int argc, char **argv)
     for (auto &a : args) std::printf(" %s", a.c_str());
     std::printf("   [%s]   start-up resident memory %.0f MB\n", method.c_str(), base);
 
-    if (method == "dp") {
+    if (is_dp) {
         PauliSet errors = sp.empty();
         if (scenario == "ball") {
             errors = sp.weight_at_most(std::atoi(args[1].c_str()));
@@ -398,6 +413,51 @@ int main(int argc, char **argv)
             }
         }
         std::printf("  set: %.4g elements, %zu nodes\n", errors.size(), errors.node_count());
+        if (method != "dp") {
+            // The same calls, in the same order, as StabilizerCode::find_pair_by_square, with a timer
+            // on each; square-nf replaces the last two steps by (E*E) & N(S), then minus S.
+            const bool   nf = (method == "square-nf");
+            const double a  = now();
+            const PauliSet sq = errors * errors;
+            const double b = now();
+            std::printf("  step E*E        %8.3f s  %10zu nodes  (%.4g elements)\n", b - a, sq.node_count(), sq.size());
+            const PauliSet N = code.normalizer();
+            const double c = now();
+            std::printf("  step N(S)       %8.3f s  %10zu nodes\n", c - b, N.node_count());
+            const PauliSet S = code.group();
+            const double e = now();
+            std::printf("  step S          %8.3f s  %10zu nodes\n", e - c, S.node_count());
+            PauliSet hit = sp.empty();
+            double   f, g;
+            if (!nf) {
+                const PauliSet L = N - S;
+                f = now();
+                std::printf("  step N(S)-S     %8.3f s  %10zu nodes\n", f - e, L.node_count());
+                hit = sq & L;
+                g = now();
+                std::printf("  step E*E & L    %8.3f s  %10zu nodes\n", g - f, hit.node_count());
+            } else {
+                const PauliSet EN = sq & N;
+                f = now();
+                std::printf("  step E*E & N    %8.3f s  %10zu nodes\n", f - e, EN.node_count());
+                hit = EN - S;
+                g = now();
+                std::printf("  step (..) - S   %8.3f s  %10zu nodes\n", g - f, hit.node_count());
+            }
+            const bool yes = !hit.is_empty();
+            double     w   = g;
+            if (yes) {
+                const std::string l       = *hit.any_element();
+                const PauliSet    partner = errors & (errors * sp.from(l));
+                (void)partner.any_element();
+                w = now();
+                std::printf("  step witness    %8.3f s\n", w - g);
+            }
+            std::printf("RESULT %-9s pair=%s  time %.3f s (code part N, S%s: %.3f s)  peak memory %.0f MB  (BuDDy table %zu nodes)\n",
+                        method.c_str(), yes ? "yes" : "no", w - a, nf ? "" : ", N-S", nf ? e - b : f - b,
+                        rss_mb(), sp.manager().peak_nodes());
+            return 0;
+        }
         const double t0 = now();
         const auto   f  = code.find_inequivalent_pair(errors, StabilizerCode::PairMethod::Dp);
         const double dt = now() - t0;

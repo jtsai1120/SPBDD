@@ -1,0 +1,463 @@
+% 編譯方式： xelatex square-product.tex（執行兩次以解析交叉引用）
+\documentclass[a4paper,11pt,fontset=none]{ctexart}
+
+% ---- 繁體中文字型：依序嘗試常見的繁體字型 -------------------------------
+\usepackage{xeCJK}
+\IfFontExistsTF{Noto Serif CJK TC}{%
+  \setCJKmainfont{Noto Serif CJK TC}\setCJKsansfont{Noto Sans CJK TC}\setCJKmonofont{Noto Sans CJK TC}}{%
+\IfFontExistsTF{Source Han Serif TC}{%
+  \setCJKmainfont{Source Han Serif TC}\setCJKsansfont{Source Han Sans TC}\setCJKmonofont{Source Han Sans TC}}{%
+\IfFontExistsTF{PMingLiU}{%
+  \setCJKmainfont{PMingLiU}\setCJKsansfont{Microsoft JhengHei}\setCJKmonofont{MingLiU}}{%
+\IfFontExistsTF{AR PL UMing TW}{%
+  \setCJKmainfont{AR PL UMing TW}\setCJKsansfont{AR PL UMing TW}\setCJKmonofont{AR PL UMing TW}}{%
+  \setCJKmainfont{Noto Serif CJK TC}}}}}
+
+\usepackage[margin=2.5cm]{geometry}
+\usepackage{amsmath,amssymb,amsthm}
+\usepackage{booktabs}
+\usepackage{enumitem}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta,positioning}
+\usepackage{float}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+\usepackage{listings}
+\usepackage[hidelinks]{hyperref}
+
+\newcommand{\tg}[2]{\texttt{#1\,|\,#2}}
+\newcommand{\code}[1]{\texttt{\detokenize{#1}}}
+\renewcommand{\emph}[1]{\textbf{#1}}
+\setlength{\emergencystretch}{3em}
+\newcommand{\F}{\mathbb{F}}
+\newcommand{\E}{\mathcal{E}}
+\newcommand{\ra}{\mathrm{root}}
+\DeclareMathOperator{\var}{var}
+\DeclareMathOperator{\supp}{supp}
+\DeclareMathOperator{\lev}{level}
+\DeclareMathOperator{\skipc}{skip}
+\DeclareMathOperator{\low}{low}
+\DeclareMathOperator{\high}{high}
+
+\newtheorem{lemma}{引理}
+\newtheorem{theorem}{定理}
+\theoremstyle{definition}
+\newtheorem{definition}{定義}
+
+\floatname{algorithm}{演算法}
+\lstset{breaklines=true,basicstyle=\ttfamily\small,columns=fullflexible,keepspaces=true,frame=single,xleftmargin=1em,xrightmargin=1em}
+\algrenewcommand\algorithmicrequire{\textbf{輸入：}}
+\algrenewcommand\algorithmicensure{\textbf{輸出：}}
+\setlength{\parskip}{0.3em}
+
+\DeclareMathOperator{\spn}{span}
+\newcommand{\Nm}{N(S)}
+\newcommand{\Lg}{N(S)\setminus S}
+
+\title{以 $\E\cdot\E$ 與 $N(S)\setminus S$ 判定不等價錯誤對（平方法）}
+\author{SPBDD 設計說明（實驗分支 \code{exp/square-product}）\\ \code{StabilizerCode::find_inequivalent_pair}，\code{PairMethod::Square}}
+\date{}
+
+\begin{document}
+\maketitle
+
+本文說明判定「錯誤集合中是否有不等價錯誤對」的第三種方法，稱為\textbf{平方法}：用 SPBDD 內建的乘法 \code{operator*} 算出錯誤集合與自己的乘積 $\E\cdot\E$，另外建出 $N(S)$ 與 $S$ 的 BDD、相減得到 $N(S)\setminus S$，最後檢查兩者是否相交。第~\ref{sec:prob} 節給出判定式並證明；第~\ref{sec:mul} 節說明 BDD 乘法如何實作；第~\ref{sec:ns} 節說明 $N(S)$ 與 $S$ 的 BDD 如何建立，以及它們為什麼會這麼大；第~\ref{sec:algo} 至~\ref{sec:cx} 節是完整演算法、見證的取法與複雜度；第~\ref{sec:meas} 節把平方法與動態規劃（DP，見 \code{docs/dp-image.tex}）及顯式列舉在相同場景下比較時間與峰值記憶體。差集、交集、包含、等價等基本 BDD 運算不另外說明。
+
+%% =====================================================================
+\section{問題與判定式}\label{sec:prob}
+
+\paragraph{記號。}$n$ 個量子位元上不計相位的 Pauli 算符對應到 $\F_2^{2n}$ 的向量：量子位元 $q$ 用兩個位元 $(x_q,z_q)$，$I=(0,0)$、$X=(1,0)$、$Z=(0,1)$、$Y=(1,1)$；BDD 的變數編號是 $x_q=2q$、$z_q=2q+1$，預設順序即編號順序。不計相位時兩個 Pauli 的乘積就是向量的 XOR，記為 $uv=u\oplus v$。辛內積
+\[
+\langle u,v\rangle=\sum_{q}\bigl(x_q(u)\,z_q(v)+z_q(u)\,x_q(v)\bigr)\pmod 2
+\]
+為 0 表示兩者交換、為 1 表示反交換。穩定子群 $S$ 由 $r$ 個彼此交換、獨立的生成元 $g_1,\dots,g_r$ 生成（$\lvert S\rvert=2^r$），其正規化子
+\[
+N(S)=\{\,v:\langle v,g_i\rangle=0,\ i=1,\dots,r\,\}
+\]
+有 $2^{2n-r}=2^{n+k}$ 個元素，$k=n-r$。$N(S)\setminus S$ 就是所有非平凡的邏輯算符。
+
+\paragraph{問題。}給定錯誤集合 $\E\subseteq\F_2^{2n}$（以 BDD 表示），判定是否存在 $e_1,e_2\in\E$ 使 $e_1e_2\in N(S)\setminus S$；若有，給出一對見證。這與 \code{docs/dp-image.tex} 的問題完全相同（該文件引理 1：$e_1e_2\in N(S)\setminus S$ 等價於兩者症狀相同、邏輯特徵不同）。
+
+\begin{definition}
+集合 $A,B\subseteq\F_2^{2n}$ 的\emph{乘積}（sumset）為 $A\cdot B=\{\,ab:a\in A,\ b\in B\,\}=\{\,a\oplus b\,\}$。特別地 $\E\cdot\E=\{\,e_1e_2:e_1,e_2\in\E\,\}$。
+\end{definition}
+
+\begin{theorem}\label{thm:square}
+$\E$ 中存在不等價錯誤對 \quad$\Longleftrightarrow$\quad $(\E\cdot\E)\cap(N(S)\setminus S)\neq\varnothing$。
+\end{theorem}
+\begin{proof}
+($\Rightarrow$) 若 $e_1,e_2\in\E$ 且 $e_1e_2\in N(S)\setminus S$，則 $e_1e_2$ 同時屬於 $\E\cdot\E$ 與 $N(S)\setminus S$。($\Leftarrow$) 若 $\ell$ 屬於交集，由乘積的定義存在 $e_1,e_2\in\E$ 使 $e_1e_2=\ell\in N(S)\setminus S$。又因為 $e_1=e_2$ 時 $e_1e_2=I\in S$，所以這一對必然是兩個不同的元素。
+\end{proof}
+
+這個判定式有幾種等價寫法，都只是集合運算：$(\E\cdot\E)\subseteq\overline{N(S)\setminus S}$（包含）、$\bigl((\E\cdot\E)\cap N(S)\bigr)\subseteq S$、或 $(\E\cdot\E)\cap(N(S)\setminus S)$ 是否為空。程式用最後一種（交集後檢查是否為常數 $\bot$），因為交集的結果剛好可以拿來取見證。
+
+\paragraph{例：$[[5,1,3]]$ 碼。}沿用 \code{docs/dp-image.tex} 第 2 節的例子：生成元 $XIXZZ$、$ZIZYY$、$IXZZX$、$IZYYZ$，
+\[
+\E=\{IIIII,\ XIIII,\ IZIII,\ IIXII,\ IIIYX\}.
+\]
+$\E\cdot\E$ 共有 11 個元素（$I$ 與 10 個兩兩乘積，沒有重複）：
+\begin{multline*}
+\E\cdot\E=\{IIIII,\ IIIYX,\ IIXII,\ \underline{IIXYX},\ IZIII,\ IZIYX,\\ IZXII,\ XIIII,\ XIIYX,\ XIXII,\ XZIII\}.
+\end{multline*}
+$\lvert N(S)\rvert=2^6=64$、$\lvert S\rvert=16$、$\lvert N(S)\setminus S\rvert=48$。11 個元素中只有 $IIXYX$ 屬於 $N(S)\setminus S$（它正是程式選出的邏輯算符 $\bar X$），其餘 10 個中，$IIIII$ 在 $S$ 中，另外 9 個不在 $N(S)$ 中。所以交集為 $\{IIXYX\}$，答案為「有」，見證是 $IIXII\cdot IIIYX=IIXYX$。這些 BDD 的節點數：$\E$ 19、$\E\cdot\E$ 19、$N(S)$ 78、$S$ 78、$N(S)\setminus S$ 94（\code{node_count()} 的口徑）。
+
+%% =====================================================================
+\section{BDD 乘法 \code{operator*} 的實作}\label{sec:mul}
+
+\code{PauliSet::operator*} 直接呼叫 \code{Bdd::sumset}（\code{src/bdd.cpp}）。它不列舉任何元素，而是在兩個 BDD 上同時遞迴。
+
+\subsection{拆出最上層變數}
+
+設 $F,G$ 是兩個集合的特徵函數，$v$ 是兩者中順序最前的變數，$F_0,F_1$（$G_0,G_1$）是把 $v$ 固定為 0、1 之後的餘因子（cofactor），它們都是其餘變數上的集合。把元素寫成 $(a_v,a')$，其中 $a_v$ 是變數 $v$ 的值、$a'$ 是其餘變數。XOR 在每個座標上獨立進行：
+\[
+(a_v,a')\oplus(b_v,b')=(a_v\oplus b_v,\ a'\oplus b').
+\]
+所以乘積中 $v=0$ 的元素來自「兩邊在 $v$ 上相同」的配對，$v=1$ 的元素來自「兩邊在 $v$ 上不同」的配對：
+\begin{equation}\label{eq:sumset}
+(F\cdot G)_0=(F_0\cdot G_0)\cup(F_1\cdot G_1),\qquad
+(F\cdot G)_1=(F_0\cdot G_1)\cup(F_1\cdot G_0),
+\end{equation}
+也就是 $F\cdot G=\mathrm{ITE}\bigl(v,\ (F_0\cdot G_1)\cup(F_1\cdot G_0),\ (F_0\cdot G_0)\cup(F_1\cdot G_1)\bigr)$。這和 BDD 的 apply 演算法是同一個骨架，差別在 apply 只配對 $(F_0,G_0)$ 與 $(F_1,G_1)$ 兩組，乘積要配對全部四組；XOR 本身完全由「哪一組餘因子送到哪一邊」表達，實際用到的 BDD 運算只有聯集與 ITE。
+
+\paragraph{只有一邊依賴 $v$。}若 $v$ 只出現在 $F$ 中（$G$ 的最上層變數在 $v$ 之下），則 $G_0=G_1=G$，式~\eqref{eq:sumset} 的兩邊相同，結果不依賴 $v$：$F\cdot G=(F_0\cdot G)\cup(F_1\cdot G)$。反之亦然。直覺上，$G$ 不限制 $v$，表示 $G$ 在 $v$ 上兩種值都有，所以乘積在 $v$ 上也兩種值都有。
+
+\paragraph{終點。}任一邊是 $\bot$（空集合）時結果為 $\bot$。任一邊是 $\top$（其餘變數上的全集）且另一邊非空時，結果為 $\top$：全集乘上任何非空集合仍是全集。
+
+\subsection{演算法}
+
+\begin{algorithm}[H]
+\caption{\code{Sumset}$(F,G)$：$F\cdot G$ 的特徵函數}\label{alg:sumset}
+\begin{algorithmic}[1]
+\If{$F=\bot$ \textbf{or} $G=\bot$} \Return $\bot$ \EndIf
+\If{$F=\top$ \textbf{or} $G=\top$} \Return $\top$ \EndIf
+\If{$\{F,G\}$ 已在備忘表中} \Return 備忘值 \EndIf
+\If{$\lev(F)<\lev(G)$} \State $R\gets\textsc{Sumset}(F_0,G)\cup\textsc{Sumset}(F_1,G)$
+\ElsIf{$\lev(G)<\lev(F)$} \State $R\gets\textsc{Sumset}(F,G_0)\cup\textsc{Sumset}(F,G_1)$
+\Else
+  \State $\mathit{same}\gets\textsc{Sumset}(F_0,G_0)\cup\textsc{Sumset}(F_1,G_1)$
+  \State $\mathit{cross}\gets\textsc{Sumset}(F_0,G_1)\cup\textsc{Sumset}(F_1,G_0)$
+  \State $R\gets\mathrm{ITE}(v,\ \mathit{cross},\ \mathit{same})$ \Comment{$v=\var(F)=\var(G)$}
+\EndIf
+\State 把 $R$ 記在 $\{F,G\}$ 名下；\Return $R$
+\end{algorithmic}
+\end{algorithm}
+
+實作上的細節：（i）備忘表以\emph{無序}的節點對為鍵，因為乘積可交換，且 BDD 的正規性保證同一個節點代表同一個函數；（ii）遞迴期間關閉 BuDDy 的動態重排序，因為演算法依賴各節點的層次在整個過程中不變；（iii）結果是一般的 BDD，可以直接再做交集、差集等運算。
+
+\paragraph{小例子。}一個量子位元、變數順序 $x,z$。$F=\{I,X\}$ 的特徵函數是 $\neg z$，$G=\{Z\}$ 的是 $\neg x\wedge z$。$G$ 的最上層變數 $x$ 在 $F$ 的 $z$ 之上，所以 $F\cdot G=\textsc{Sumset}(F,G_0)\cup\textsc{Sumset}(F,G_1)$，其中 $G_1=\bot$、$G_0=z$。再算 $\textsc{Sumset}(\neg z,\ z)$：兩者都在 $z$ 上分岔，$F_0=\top,F_1=\bot,G_0=\bot,G_1=\top$；$\mathit{same}=\textsc{Sumset}(\top,\bot)\cup\textsc{Sumset}(\bot,\top)=\bot$，$\mathit{cross}=\textsc{Sumset}(\top,\top)\cup\textsc{Sumset}(\bot,\bot)=\top$，所以結果是 $\mathrm{ITE}(z,\top,\bot)=z$，即 $\{Z,Y\}$。直接驗算：$I\cdot Z=Z$、$X\cdot Z=Y$。
+
+\subsection{代價}
+
+遞迴的子問題是一對節點 $(f,g)$，$f$ 取自 $F$、$g$ 取自 $G$，有備忘表後每對只算一次，所以\emph{子問題數至多 $\lvert F\rvert\cdot\lvert G\rvert$}（$\lvert\cdot\rvert$ 為節點數），與集合的元素數無關。但每個子問題還要做一到兩次聯集與一次 ITE，它們的代價取決於子結果的大小；子結果（以及最終的 $F\cdot G$）的節點數一般而言\emph{沒有}以 $\lvert F\rvert\cdot\lvert G\rvert$ 為界的保證，我們也不知道一般的多項式上界。因此乘法的實際代價要看集合的結構：
+\begin{itemize}[leftmargin=1.5em]
+\item 權重 $\le t$ 的球：$\E\cdot\E$ 是權重 $\le 2t$ 的球（兩個權重 $\le t$ 的 Pauli 相乘權重 $\le 2t$；反之每個權重 $\le 2t$ 的 Pauli 都能拆成兩個權重 $\le t$ 的乘積），節點數 $O(nt)$。量測中 $d{=}11,t{=}4$ 的球（1,171 個節點）平方後仍只有約 2,000 個節點，耗時數毫秒。
+\item 子群（例如「支撐在某區塊內的所有 Pauli」）：$\E\cdot\E=\E$。
+\item $K$ 個陪集的聯集：$\E\cdot\E$ 是至多 $K(K+1)/2$ 個（較大的）陪集的聯集，結構差、圖可能很大；第~\ref{sec:meas} 節的 (E4) 場景就是這種情形。
+\end{itemize}
+
+\paragraph{與單一元素相乘。}取見證時要算 $\E\cdot\{\ell\}$（$\ell$ 是一個固定的 Pauli）。$\{\ell\}$ 的 BDD 是每個變數一個節點的鏈，代入演算法~\ref{alg:sumset} 後，在 $\ell$ 為 1 的變數上恰好把子節點對調，在 $\ell$ 為 0 的變數上保持不變，所以 $\E\cdot\{\ell\}$ 與 $\E$ 的節點數相同；子問題至多 $O(n\cdot\lvert\E\rvert)$ 個（$\E$ 跳過的層次上，同一個節點會與鏈上的數個節點配對），通常與 $\E$ 的節點數成線性。這和 DP 文件中「位移只是重新標號」是同一件事。
+
+%% =====================================================================
+\section{$N(S)$ 與 $S$ 的 BDD}\label{sec:ns}
+
+兩者都由「奇偶檢查」（parity check）的交集組成，而且都不會列舉群中的元素。
+
+\subsection{奇偶檢查}
+
+\code{PauliSpace::parity}$(V,t)$ 建出「變數集合 $V$ 的 XOR 等於 $t$」的特徵函數，做法是把 $V$ 中每個變數的字面值依序 XOR 起來。它的 BDD 在 $V$ 的每個變數上至多兩個節點（「目前為止的奇偶是 0」與「是 1」兩個狀態），不在 $V$ 中的變數完全不出現，所以節點數至多 $2\lvert V\rvert$。圖~\ref{fig:parity} 是一個例子。
+
+\paragraph{交換條件就是一個奇偶檢查。}由辛內積的定義，$\langle e,p\rangle$ 只是 $e$ 的某些座標的 XOR：$p$ 在量子位元 $q$ 上含 $Z$ 成分（$Z$ 或 $Y$）就取 $x_q(e)$，含 $X$ 成分（$X$ 或 $Y$）就取 $z_q(e)$。因此
+\[
+\{e:\langle e,p\rangle=0\}=\mathrm{parity}\bigl(\{x_q: p_q\in\{Z,Y\}\}\cup\{z_q:p_q\in\{X,Y\}\},\ 0\bigr),
+\]
+這就是 \code{PauliSpace::commuting_with}$(p)$。例如 $[[5,1,3]]$ 碼的 $g_1=XIXZZ$：$\langle e,g_1\rangle=z_1\oplus z_3\oplus x_4\oplus x_5$。
+
+\begin{figure}[ht]
+\centering
+\begin{tikzpicture}[
+  dec/.style={circle,draw,minimum size=8mm,inner sep=0pt,font=\small},
+  term/.style={rectangle,draw,rounded corners,minimum height=6mm,minimum width=6mm,inner sep=2pt,font=\small},
+  zero/.style={-{Stealth},dashed},
+  one/.style={-{Stealth}}]
+  \node[dec] (a) at (0,0) {$z_1$};
+  \node[dec] (b0) at (-1.3,-1.4) {$z_3$};
+  \node[dec] (b1) at (1.3,-1.4) {$z_3$};
+  \node[dec] (c0) at (-1.3,-2.8) {$x_4$};
+  \node[dec] (c1) at (1.3,-2.8) {$x_4$};
+  \node[dec] (d0) at (-1.3,-4.2) {$x_5$};
+  \node[dec] (d1) at (1.3,-4.2) {$x_5$};
+  \node[term] (T) at (-1.3,-5.6) {$\top$};
+  \node[term] (F) at (1.3,-5.6) {$\bot$};
+  \draw[zero] (a)--(b0); \draw[one] (a)--(b1);
+  \draw[zero] (b0)--(c0); \draw[one] (b0)--(c1);
+  \draw[zero] (b1)--(c1); \draw[one] (b1)--(c0);
+  \draw[zero] (c0)--(d0); \draw[one] (c0)--(d1);
+  \draw[zero] (c1)--(d1); \draw[one] (c1)--(d0);
+  \draw[zero] (d0)--(T); \draw[one] (d0)--(F);
+  \draw[zero] (d1)--(F); \draw[one] (d1)--(T);
+  \node[font=\small,anchor=west] at (2.4,-1.4) {右欄：目前為止的奇偶 $=1$};
+  \node[font=\small,anchor=east] at (-2.4,-1.4) {左欄：目前為止的奇偶 $=0$};
+\end{tikzpicture}
+\caption{$\{e:\langle e,XIXZZ\rangle=0\}$，即 $z_1\oplus z_3\oplus x_4\oplus x_5=0$ 的 BDD（虛線＝取 0，實線＝取 1）。其他 6 個變數不出現（不受限制）。}\label{fig:parity}
+\end{figure}
+
+\subsection{$N(S)$}
+
+由辛內積的雙線性，$v$ 與 $S$ 中每個元素交換，等價於 $v$ 與每個生成元交換。所以
+\[
+N(S)=\bigcap_{i=1}^{r}\{\,v:\langle v,g_i\rangle=0\,\},
+\]
+程式（\code{StabilizerCode::normalizer} → \code{PauliSpace::commuting_with_all}）就是從 $\top$ 開始，依序與 $r$ 個奇偶檢查做交集。這裡用的是 \code{StabilizerCode} 建構時化簡後的生成元。
+
+\subsection{$S$}
+
+$S$ 是生成元在 $\F_2$ 上的生成空間（span）$W=\spn\{g_1,\dots,g_r\}$。直接把生成元乘開需要 $2^r$ 個元素，所以 \code{PauliSpace::generated_by} 改用對偶：在一般的點積 $h\cdot v=\sum_j h_jv_j$ 下，任何子空間都滿足 $(W^\perp)^\perp=W$（$W\subseteq(W^\perp)^\perp$，且兩者維度都是 $\dim W$），所以
+\[
+v\in W\iff h\cdot v=0\quad\text{對 }W^\perp\text{ 的一組基底中每個 }h .
+\]
+$W^\perp$ 就是 $r\times 2n$ 生成元矩陣的零空間（null space）：對矩陣做一次高斯消去化成簡化列梯形，每個非主元行給出一個基底向量，共 $2n-r$ 個。每個基底向量 $h$ 變成一個奇偶檢查 $\mathrm{parity}(\supp h,0)$，$S$ 就是這 $2n-r$ 個檢查的交集。整個過程的代價與群的大小 $2^r$ 無關。
+
+\paragraph{另一種等價寫法（程式沒有採用）。}因為辛形式非退化，$S$ 也是 $N(S)$ 的辛補：$S=\{v:\langle v,u\rangle=0,\ \forall u\in N(S)\}$，而 $N(S)$ 由 $g_1,\dots,g_r$ 與邏輯算符 $\bar X_j,\bar Z_j$ 生成，所以 $S=N(S)\cap\bigcap_j\{\langle v,\bar X_j\rangle=0\}\cap\{\langle v,\bar Z_j\rangle=0\}$，只要在 $N(S)$ 上再加 $2k$ 個檢查。由此 $N(S)\setminus S=N(S)\cap\bigcup_j\bigl(\{\langle v,\bar X_j\rangle=1\}\cup\{\langle v,\bar Z_j\rangle=1\}\bigr)$。第~\ref{sec:limits} 節會提到這是一個可能的改進。
+
+\subsection{$N(S)\setminus S$}
+
+最後一步是一次差集 $N(S)\wedge\neg S$。$N(S)$、$S$、$N(S)\setminus S$ 三者都\emph{只依賴碼}，與錯誤集合無關；目前的實作在每次呼叫時都重建一次，量測中把它們的時間單獨列出（「碼的部分」）。
+
+\subsection{這些 BDD 為什麼會大}
+
+$N(S)$ 與 $S$ 都是線性子空間，而線性子空間的 BDD 大小有精確的描述。
+
+\begin{lemma}\label{lem:width}
+設 $C\subseteq\F_2^m$ 是線性子空間，變數順序為 $y_1,\dots,y_m$。對 $0\le\ell\le m$，令 $C_{\le\ell}=\{c\in C:c_{\ell+1}=\dots=c_m=0\}$、$C_{>\ell}=\{c\in C:c_1=\dots=c_\ell=0\}$、
+\[
+s_\ell=\dim C-\dim C_{\le\ell}-\dim C_{>\ell}.
+\]
+則固定前 $\ell$ 個變數後得到的非空子函數恰有 $2^{s_\ell}$ 種；因此 $C$ 的 BDD 在變數 $y_{\ell+1}$ 上的節點至多 $2^{s_\ell}$ 個，總節點數至多 $2+\sum_{\ell}2^{s_\ell}$。
+\end{lemma}
+\begin{proof}
+固定前綴 $p\in\F_2^\ell$，剩下的集合是 $R_p=\{s:(p,s)\in C\}$。若 $R_p\neq\varnothing$，取 $(p,s_0)\in C$，則 $R_p=s_0+\{s:(0,s)\in C\}$，是同一個子空間（$C_{>\ell}$ 在後段的投影）的陪集。兩個非空的 $R_p,R_{p'}$ 相等，若且唯若 $(p\oplus p',0)\in C$，即 $p\oplus p'$ 屬於 $C_{\le\ell}$ 在前段的投影。出現非空 $R_p$ 的前綴 $p$ 是 $C$ 在前段的投影，其維度為 $\dim C-\dim C_{>\ell}$；再除以等價類的大小 $2^{\dim C_{\le\ell}}$，得到 $2^{s_\ell}$ 種相異的非空子函數。化簡後的 BDD 中，標號為 $y_{\ell+1}$ 的節點各自代表一個相異的非空子函數，故至多 $2^{s_\ell}$ 個。
+\end{proof}
+
+$s_\ell$ 在編碼理論中稱為該順序下的「狀態複雜度」（BDD 正是最小網格圖 trellis）。它與集合大小 $2^{\dim C}$ 無關，而與「有多少獨立的約束橫跨第 $\ell$ 個切點」有關。兩個推論：
+\begin{itemize}[leftmargin=1.5em]
+\item \textbf{$N(S)$ 與 $S$ 的大小相近。}在點積下，$C^\perp$ 的狀態複雜度與 $C$ 相同：$\dim(C^\perp)_{\le\ell}=\ell-(\dim C-\dim C_{>\ell})$、$\dim(C^\perp)_{>\ell}=(m-\ell)-(\dim C-\dim C_{\le\ell})$，代入即得 $s_\ell(C^\perp)=s_\ell(C)$。而 $N(S)$ 是 $S$ 在點積下的正交補再把每個量子位元內的 $x_q,z_q$ 對調；這個對調不改變落在量子位元邊界上的切點，所以 $N(S)$ 與 $S$ 在每個量子位元邊界上的狀態複雜度相同。量測中兩者的節點數在所有碼距上都完全相同（表~\ref{tab:code}）。
+\item \textbf{對 2D 局部碼，大小隨碼距指數成長。}旋轉表面碼以列優先（row-major）的量子位元順序排列時，中間的切點會被約一整列（$\approx d$ 個）穩定子橫跨，所以 $s_\ell$ 約與 $d$ 同階，節點數約為 $2n\cdot2^{\Theta(d)}$。量測到的節點數（$d\ge5$ 起）每當 $d$ 加 2 就乘上約 6--9（表~\ref{tab:code}），與這個估計一致。這是\emph{碼本身的代價}：不論錯誤集合多小，平方法都要付。
+\end{itemize}
+
+%% =====================================================================
+\section{完整演算法與見證}\label{sec:algo}
+
+\begin{algorithm}[H]
+\caption{平方法（\code{StabilizerCode::find_pair_by_square}）}\label{alg:square}
+\begin{algorithmic}[1]
+\Require 錯誤集合 $\E$ 的 BDD；碼的（化簡後）生成元 $g_1,\dots,g_r$
+\Ensure 一對不等價錯誤 $(e_1,e_2)$，或「無」
+\State $P\gets\E\cdot\E$ \Comment{演算法~\ref{alg:sumset}}
+\State $N\gets\bigcap_i\mathrm{parity}(\text{commutation vars of }g_i,0)$ \Comment{$N(S)$}
+\State $S\gets\bigcap_{h}\mathrm{parity}(\supp h,0)$，$h$ 走遍生成元矩陣零空間的基底 \Comment{$S$}
+\State $L\gets N\wedge\neg S$ \Comment{$N(S)\setminus S$}
+\State $H\gets P\wedge L$
+\If{$H=\bot$} \Return 無 \Comment{定理~\ref{thm:square}}\EndIf
+\State $\ell\gets H$ 的任一元素 \Comment{沿圖走一次，$O(n)$}
+\State $A\gets\E\wedge(\E\cdot\{\ell\})$ \Comment{$\{e\in\E: e\ell\in\E\}$，非空}
+\State $e_1\gets A$ 的任一元素；$e_2\gets e_1\ell$
+\State \Return $(e_1,e_2)$
+\end{algorithmic}
+\end{algorithm}
+
+\paragraph{見證的正確性。}$\ell\in\E\cdot\E$，所以存在 $e_1,e_2\in\E$ 使 $e_1e_2=\ell$，也就是 $e_1=e_2\ell\in\E\cdot\{\ell\}$；故 $A$ 非空。對 $A$ 中任一 $e_1$，$e_1\in\E$ 且 $e_1\ell\in\E$；令 $e_2=e_1\ell$，則 $e_1e_2=\ell\in N(S)\setminus S$。程式另外檢查 $A$ 非空（若為空就丟出例外），並與 DP 一樣回傳兩者的症狀與邏輯特徵。
+
+\paragraph{與 DP 的對照。}平方法從頭到尾都在原本的 $2n$ 個變數上工作，不做基底變換，也不形成（症狀，邏輯特徵）的關係 $G$；DP 則只在 $r+2k$ 個標籤變數上工作，從不建 $N(S)$ 或 $S$。兩者都不列舉元素。
+
+%% =====================================================================
+\section{複雜度}\label{sec:cx}
+
+平方法的代價分成兩部分：
+\begin{enumerate}[leftmargin=2em]
+\item \textbf{碼的部分}（第 2--4 行）：只依賴碼與變數順序。$N(S)$ 需要 $r$ 次交集，$S$ 需要 $2n-r$ 次交集，每次交集的代價與當時的圖大小成正比（奇偶檢查每層至多兩個節點）；最後的大小由引理~\ref{lem:width} 決定，約為 $2n\cdot2^{\max_\ell s_\ell}$。對旋轉表面碼這是 $2^{\Theta(d)}$。
+\item \textbf{錯誤集合的部分}（第 1、5 行與見證）：乘法 $\E\cdot\E$ 的子問題至多 $\lvert\E\rvert_{\text{節點}}^2$，但結果大小沒有一般的上界（第~\ref{sec:mul} 節）；交集 $P\wedge L$ 的代價至多 $\lvert P\rvert\cdot\lvert L\rvert$；見證是線性的。
+\end{enumerate}
+因此：碼的部分可以對同一個碼的多次查詢共用（目前實作沒有快取）；錯誤集合的部分在 $\E\cdot\E$ 仍有結構時（球、子群）非常小。相較之下，DP 沒有碼的部分，但每次查詢都要對 $\E$ 的每個節點做一次「聯集＋位移」，代價取決於各後綴像的大小；顯式列舉的代價則與元素數成正比。
+
+另外要注意 BuDDy 的設定：$N(S)$ 與 $S$ 在 $d\ge13$ 時有數百萬個節點，此時每次交集的運算元都很大。BuDDy 的運算快取是直接映射的雜湊表，而且每次垃圾回收都會清空；節點表接近滿載時，表每次只擴充 50,000 個節點，造成頻繁的垃圾回收與快取清空，大量子問題被重算。實測 $d{=}13$ 的 $N(S)$（168 次交集）：節點表 $2^{22}$／快取 $2^{20}$ 時 30 分鐘內沒有建完（第~\ref{sec:meas} 節）；另外只建 $N(S)$ 的探測中，只加大節點表（$2^{25}$／$2^{20}$）或只加大快取（$2^{22}$／$2^{23}$）時，170 秒內分別只完成 95 與 110 次交集，而 $2^{24}$／$2^{22}$ 約 3 分鐘、$2^{25}$／$2^{23}$ 約 2.7 分鐘完成。也就是節點表與快取兩者都要夠大。所以第~\ref{sec:meas} 節同時給出兩種設定的數字。
+
+%% =====================================================================
+\section{實作與 API}
+
+\begin{itemize}[leftmargin=1.5em]
+\item 列舉 \code{PairMethod} 新增 \code{Square}（原有 \code{Dp}、\code{Compose}）。\code{find_inequivalent_pair} 與 \code{has_inequivalent_pair} 都接受它，預設仍是 \code{Dp}。
+\item 實作在 \code{StabilizerCode::find_pair_by_square}（\code{src/stabilizercode.cpp}），只用公開 API：\code{operator*}、\code{normalizer()}、\code{group()}、\code{operator-}、\code{operator&}、\code{is_empty()}、\code{any_element()}、\code{PauliSpace::from}，以及 \code{pauli_mul}。
+\item 測試（\code{test/stabilizercode_test.cpp}）：在位元翻轉碼、五量子位元碼與 Steane 碼上各取 60 個隨機陪集聯集，三種方法（DP、compose、平方法）判定結果一致，且每個回傳的見證都經獨立驗證（屬於集合、症狀相同、特徵不同、乘積落在 $N(S)\setminus S$）；Steane 碼上權重 $\le t$ 的球（$t=0,1,2$）結果符合 $2t\ge d$ 的已知答案。既有的所有測試不受影響。
+\item 量測程式 \code{examples/dp_vs_explicit.cpp} 新增 \code{square} 與 \code{square-nf} 兩種方法；前者照演算法~\ref{alg:square} 的順序逐步計時，後者是把最後兩步改成「先 $P\wedge N$，再減 $S$」的變體（不形成 $N(S)\setminus S$）。環境變數 \code{SPBDD_NODES_LOG2}、\code{SPBDD_CACHE_LOG2} 可改 BuDDy 的節點表與快取大小。
+\end{itemize}
+
+%% =====================================================================
+\section{量測：平方法、DP 與顯式列舉}\label{sec:meas}
+
+\paragraph{環境與設定。}同一個雲端容器（2 vCPU、8~GB）、\code{g++ -O2}、單執行緒、預設變數順序、不做重排序；數字來自同一輪量測（一個工作接一個工作依序執行；除 E4 第一列的平方法另以 1,200 秒時限重跑一次外，每列只跑一次；第~\ref{sec:variants} 節的變體緊接在後的第二批執行），由 \code{examples/dp_vs_explicit.cpp} 產生。三種方法：
+\begin{itemize}[leftmargin=1.5em]
+\item \textbf{平方法}：\code{square} 模式，照演算法~\ref{alg:square} 逐步計時。「總時間」是全部步驟；「集合部分」只含 $\E\cdot\E$、$P\wedge L$ 與（答案為「有」時的）見證，也就是 $N(S)\setminus S$ 已事先建好、可對同一個碼重複使用時，每次查詢真正要付的代價。
+\item \textbf{DP}：\code{PairMethod::Dp}（\code{docs/dp-image.tex}）。
+\item \textbf{顯式}：與 \code{docs/dp-image.tex} 第 9.2 節相同的雜湊表基線（被告知集合的建構配方、逐一列舉、雜湊表上限 2~GB，超過時把症狀空間分成 $P$ 份分趟執行）。
+\end{itemize}
+BuDDy 設定有兩種：\textbf{標準}（節點表 $2^{22}$、每個運算快取 $2^{20}$，與 DP 文件相同，啟動時駐留記憶體 228~MB）與\textbf{大}（$2^{24}$／$2^{22}$，啟動時 900~MB）。原因見第~\ref{sec:cx} 節最後一段：$d\ge13$ 時 $N(S)$、$S$ 有數百萬個節點，標準設定下會陷入頻繁的垃圾回收。除非特別標註，數字都是標準設定；標 $^\dagger$ 的是大設定。記憶體一律是整個行程的駐留記憶體峰值（含預先配置的節點表與快取）。所有場景都使用列優先排列的旋轉表面碼（$k=1$）。
+
+\subsection{碼的部分：$N(S)$、$S$、$N(S)\setminus S$}
+
+\begin{table}[H]
+\centering
+\small
+\begin{tabular}{@{}rrrrrrr@{}}
+\toprule
+$d$ & $n$ & $r$ & $N(S)$ 節點數 & $S$ 節點數 & $N(S)\setminus S$ 節點數 & 建構時間（$N$＋$S$＋差集）\\
+\midrule
+3  & 9   & 8   & 142 & 142 & 186 & $<0.001$ s\\
+5  & 25  & 24  & 2,142 & 2,142 & 3,070 & 0.014 s\\
+7  & 49  & 48  & 19,774 & 19,774 & 29,054 & 0.12 s\\
+9  & 81  & 80  & 144,190 & 144,190 & 213,822 & 2.1--2.7 s（$^\dagger$1.9--2.1 s）\\
+11 & 121 & 120 & 918,846 & 918,846 & 1,368,382 & 31.6--36.5 s（$^\dagger$26.1--27.9 s）\\
+13 & 169 & 168 & 5,371,198 & 5,371,198 & 8,017,214 & 30 分鐘內未完成（$^\dagger$325--338 s）\\
+15 & 225 & 224 & \multicolumn{4}{l}{大設定下 30 分鐘內連 $N(S)$ 都沒有建完}\\
+\bottomrule
+\end{tabular}
+\caption{只依賴碼的部分。時間是同一輪量測中所有用到該碼的執行（每個 $d$ 1--15 次）的範圍。$N(S)$ 與 $S$ 的節點數在每個 $d$ 上都完全相同；第~\ref{sec:ns} 節的對偶性只保證兩者在量子位元邊界上的切寬相同，總節點數完全相同是觀察到的結果；$d$ 每加 2，節點數約乘以 6--9（$d\ge5$ 起；$d$ 越大越接近 6），時間約乘以 9--22（每次交集的代價與當時的圖大小成正比，交集次數又與 $n$ 成正比）。}\label{tab:code}
+\end{table}
+
+\subsection{(E1) 權重球}
+
+所有權重 $\le t$ 的 Pauli，$d>2t$，答案皆為「無」。
+
+\begin{table}[H]
+\centering
+\small
+\begin{tabular}{@{}rrrrrrr@{}}
+\toprule
+$d$ & $t$ & $\lvert\E\rvert$ & DP & 平方法（總） & 平方法（集合部分） & 顯式（$P$）\\
+\midrule
+9  & 3 & $2.33\times10^6$ & 0.55 s & 2.27 s & 0.013 s & 0.58 s (1)\\
+11 & 3 & $7.84\times10^6$ & 1.70 s & 31.6 s & 0.054 s & 2.43 s (1)\\
+13 & 3 & $2.15\times10^7$ & 5.66 s & $^\dagger$339 s & $^\dagger$0.33 s & 5.72 s (1)\\
+15 & 3 & $5.08\times10^7$ & 13.2 s & $^\dagger>1800$ s & --- & 18.4 s (1)\\
+9  & 4 & $1.37\times10^8$ & 3.46 s & 2.29 s & 0.026 s & 60.1 s (2)\\
+11 & 4 & $6.96\times10^8$ & 19.9 s（$^\dagger$13.4 s） & 36.7 s（$^\dagger$28.0 s） & 0.15 s & 416 s (8)\\
+13 & 4 & $2.68\times10^9$ & 193 s（$^\dagger$40.5 s） & $^\dagger$325 s & $^\dagger$0.45 s & 未執行\footnotemark\\
+\bottomrule
+\end{tabular}
+\caption{權重球的時間。$\E\cdot\E$（權重 $\le2t$ 的球）的節點數在 1,051（$d{=}9,t{=}3$）到 3,067（$d{=}15,t{=}3$）之間，建構只要 1--4 毫秒；$d{=}13$ 的平方法在標準設定下 30 分鐘內沒有建完 $N(S)$，所以只列大設定。集合部分幾乎全是 $P\wedge L$ 這一次交集。顯式的時間是最後成功的 $P$ 的那一次；含先前超過上限而中止的嘗試，$d{=}9,t{=}4$ 共 114 s、$d{=}11,t{=}4$ 共 596 s。峰值記憶體：DP 228--357~MB（大設定 900~MB）；平方法在標準設定下 $d\le11$ 都是 228--229~MB，$d=13$ 需要大設定（900~MB）；顯式 101~MB（$d{=}9,t{=}3$）到 3.1~GB（$t=4$ 與 $d{=}15,t{=}3$）。}\label{tab:e1}
+\end{table}
+\footnotetext{\code{docs/dp-image.tex} 中同一個設定以 $P=64$ 執行 80 分鐘仍未完成；外推約需 3 小時。}
+
+\subsection{(E2) 整塊區域與 (E3) 區塊內的權重球}
+
+$d=9$，集合為「支撐在 $a\times b$ 區塊內的所有 Pauli」（E2，共 $4^{ab}$ 個）或「支撐在 $a\times a$ 區塊內且權重 $\le t$」（E3）；答案皆為「無」。$d=9$ 時平方法的碼的部分約 2.1--2.7 秒（表~\ref{tab:code}），所以下表把平方法的總時間與集合部分分開列。
+
+\begin{table}[H]
+\centering
+\small
+\begin{tabular}{@{}lrrrrr@{}}
+\toprule
+集合 & $\lvert\E\rvert$ & DP & 平方法（總） & 平方法（集合部分） & 顯式（記憶體）\\
+\midrule
+E2：$3\times3$ & $2.6\times10^5$ & 0.001 s & 2.72 s & 0.005 s & 0.010 s（6 MB）\\
+E2：$4\times3$ & $1.7\times10^7$ & 0.001 s & 2.44 s & 0.004 s & 0.43 s（6 MB）\\
+E2：$4\times4$ & $4.3\times10^9$ & 0.001 s & 2.19 s & 0.004 s & 159 s（53 MB）\\
+E2：$5\times4$ & $1.1\times10^{12}$ & 0.001 s & 2.42 s & 0.007 s & 不可行\\
+E2：$5\times5$ & $1.1\times10^{15}$ & 0.003 s & 2.40 s & 0.005 s & 不可行\\
+E2：$6\times6$ & $4.7\times10^{21}$ & 0.005 s & 2.13 s & 0.005 s & 不可行\\
+E2：$8\times8$ & $3.4\times10^{38}$ & 0.040 s & 2.18 s & 0.014 s & 不可行\\
+\midrule
+E3：$6\times6,t{=}3$ & $1.99\times10^5$ & 0.025 s & 2.32 s & 0.008 s & 0.035 s（11 MB）\\
+E3：$6\times6,t{=}4$ & $4.97\times10^6$ & 0.080 s & 2.45 s & 0.009 s & 1.61 s（197 MB）\\
+E3：$5\times5,t{=}5$ & $1.40\times10^7$ & 0.156 s & 2.25 s & 0.008 s & 4.36 s（389 MB）\\
+E3：$6\times6,t{=}5$ & $9.66\times10^7$ & 0.545 s & 2.31 s & 0.010 s & 36.6 s（3,077 MB）\\
+E3：$6\times6,t{=}6$ & $1.52\times10^9$ & 4.55 s & 2.21 s & 0.012 s & 889 s，$P=8$（3,108 MB）\\
+\bottomrule
+\end{tabular}
+\caption{區域型集合。E2 的 $\E$ 是子群，所以 $\E\cdot\E=\E$；E3 的 $\E\cdot\E$ 是區塊內權重 $\le2t$ 的球（683--1,003 個節點）。DP 與平方法的記憶體都是 228~MB。顯式在 E3 $6\times6,t{=}6$ 含失敗嘗試共 1,124 s。}\label{tab:e23}
+\end{table}
+
+\subsection{(E4) 無結構集合：隨機陪集的聯集}
+
+$K$ 個陪集、每個有 $G$ 個隨機生成元、權重 $\le W$（固定種子，與 DP 文件相同）。答案皆為「無」。
+
+\begin{table}[H]
+\centering
+\footnotesize
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{@{}rrrrrrr@{}}
+\toprule
+$d$ & $K,G,W$ & $\lvert\E\rvert$ & $\E$ 節點數 & DP（記憶體） & 平方法 & 顯式（記憶體）\\
+\midrule
+7  & 50, 8, 5   & $1.28\times10^4$ & 113,772 & 0.64 s（235 MB） & $>1200$ s & 0.001 s（6 MB）\\
+9  & 100, 8, 5  & $2.56\times10^4$ & 387,759 & 2.97 s（251 MB） & $>600$ s & 0.002 s（6 MB）\\
+11 & 300, 8, 5  & $7.67\times10^4$ & 1,569,997 & 32.1 s（337 MB） & $>600$ s & 0.007 s（8 MB）\\
+7  & 20, 16, 4  & $1.18\times10^6$ & 562,008 & 19.4 s（266 MB） & $>600$ s & 0.29 s（53 MB）\\
+9  & 20, 20, 4  & $2.10\times10^7$ & 4,885,255 & $>300$ s & 記憶體不足$^*$ & 7.75 s（773 MB）\\
+\bottomrule
+\end{tabular}
+\caption{無結構集合。平方法卡在第一步 $\E\cdot\E$：逐步輸出完整保存的四列（$d{=}9,K{=}100$ 那一列的逐步輸出在逾時時遺失）都停在乘法還沒完成。以 $(d{=}11,K{=}300)$ 為例，$\E$ 有 157 萬個節點，乘法的子問題上限是 $2.5\times10^{12}$ 對。$^*$最後一列在約 6~GB 時被系統以記憶體不足終止：乘法的備忘表為每一對節點保存一個中間結果（BDD 參照），這些結果在乘法結束前都不能被回收。第一列執行到第 11 分鐘時駐留記憶體已達 2.4~GB。}\label{tab:e4}
+\end{table}
+
+\subsection{(E5) 答案為「有」的集合}
+
+權重球且 $2t\ge d$。顯式在找到第一對時就停止；DP 仍要算完整的 $G$；平方法的交集非空，再加上取見證。
+
+\begin{table}[H]
+\centering
+\small
+\begin{tabular}{@{}rrrrrrr@{}}
+\toprule
+$d$ & $t$ & $\lvert\E\rvert$ & DP（記憶體） & 平方法（總） & 平方法（集合部分） & 顯式（$P$；記憶體）\\
+\midrule
+5 & 3 & $6.49\times10^4$ & 0.035 s（228 MB） & 0.016 s & 0.003 s & 0.001 s（1；6 MB）\\
+7 & 4 & $1.77\times10^7$ & 1.13 s（228 MB） & 0.128 s & 0.007 s & 0.099 s（1；29 MB）\\
+9 & 5 & $6.36\times10^9$ & 347 s（439 MB） & 2.60 s & 0.071 s & 38.5 s（2；3,108 MB）\\
+\bottomrule
+\end{tabular}
+\caption{答案為「有」的權重球；三種方法的判定都與已知答案（$2t\ge d$ 時為「有」）一致。顯式在 $d{=}9,t{=}5$ 含先前中止的 $P=1$ 嘗試共 89 s。平方法的集合部分包含取見證（0.001--0.005 s）；$P\wedge L$ 的節點數為 528、1,879、5,758。}\label{tab:e5}
+\end{table}
+
+\subsection{兩個變體}\label{sec:variants}
+
+\paragraph{(a) 不建 $S$：$N(S)\setminus S=N(S)\cap\bigl(\{\langle v,\bar X\rangle=1\}\cup\{\langle v,\bar Z\rangle=1\}\bigr)$。}這是第~\ref{sec:ns} 節的另一種寫法（$k=1$）。在 $d=7,9,11$ 上它與程式的 $N(S)-S$ 得到同一個 BDD（以節點比較確認），碼的部分的時間：
+
+\begin{center}
+\small
+\begin{tabular}{@{}rrrr@{}}
+\toprule
+$d$ & 現行（$N$＋$S$＋差集） & 變體 (a)（$N$＋兩個檢查） & 其中 $N(S)$\\
+\midrule
+7  & 0.12 s & 0.07 s & 0.07 s\\
+9  & 2.1--2.7 s & 1.28 s & 1.21 s\\
+11 & 31.6--36.5 s & 17.9 s & 17.4 s\\
+13 & $^\dagger$325--338 s & $^\dagger$209 s & $^\dagger$196 s\\
+\bottomrule
+\end{tabular}
+\end{center}
+也就是把碼的部分縮短約 35--55\%（$S$ 那 $2n-r$ 次交集被兩個奇偶檢查與一次交集取代），剩下的幾乎全是 $N(S)$ 本身。它不改變成長率：$N(S)$ 的大小仍由引理~\ref{lem:width} 決定。
+
+\paragraph{(b) 不形成 $N(S)\setminus S$：先 $P\wedge N(S)$，再減 $S$（\code{square-nf}）。}省下差集那一步（$d{=}9$ 約 0.05 s、$d{=}11$ 約 0.4--0.6 s），但集合部分變成兩次運算，而且中間結果 $P\wedge N(S)$ 比較大（$d{=}11,t{=}4$：37,755 個節點）。在 $d{=}9,t{=}4$、$d{=}11,t{=}4$、$6\times6,t{=}6$、$d{=}7,t{=}4$ 與 $d{=}9,t{=}5$ 上，集合部分分別是 0.043、0.156、0.024、0.009、0.077 s，與原本的 0.026、0.154、0.012、0.007、0.071 s 相比相當或較慢（最多約 2 倍）。結論：若 $N(S)\setminus S$ 會被重複使用，原本的寫法較好；否則兩者差異可以忽略。
+
+\subsection{由這些數字得到的結論}
+
+\begin{itemize}[leftmargin=1.5em]
+\item \textbf{平方法的代價幾乎全在碼的部分。}在 E1--E3、E5 中 $d\ge9$ 的每一列，建 $N(S)$、$S$ 與 $N(S)\setminus S$ 佔總時間的 97\% 以上（$d=5,7$ 的小例子也有 87--95\%）；它只依賴碼，且隨碼距以約 $2^{\Theta(d)}$ 成長（表~\ref{tab:code}）：$d{=}9$ 約 2 秒、$d{=}11$ 約 30 秒、$d{=}13$ 在大設定下約 5.5 分鐘（標準設定下 30 分鐘內建不完），$d{=}15$ 在大設定下 30 分鐘內仍建不完。
+\item \textbf{單次查詢時，誰比較快取決於碼的部分與 DP 每次查詢的代價誰大。}平方法勝過 DP 的情形：DP 的代價已超過碼的部分，例如 $d{=}9,t{=}4$ 的球（2.29 s 對 3.46 s）、$6\times6,t{=}6$ 的區塊球（2.21 s 對 4.55 s），以及答案為「有」的 $d{=}9,t{=}5$ 的球（2.60 s 對 347 s，顯式 38.5 s）。DP 勝過平方法的情形：碼較大而集合較簡單，例如 $d{=}11,t{=}3$（1.70 s 對 31.6 s）、$d{=}13$ 的球、所有 E2 區域（DP 在 0.04 秒內，平方法約 2.2 秒都花在碼上）。
+\item \textbf{若碼的部分可以共用，平方法的每次查詢在權重型的集合上比 DP 快一到三個數量級以上。}平方法的集合部分在 E1--E3、E5 全部在 0.5 秒以內。在 E1、E3、E5 上它比 DP 快約 3 倍（最小的 $6\times6,t{=}3$ 區塊球：0.008 s 對 0.025 s）到約 5,000 倍；凡是 DP 本身要 1 秒以上的列都快 17 倍以上（17 倍是 $d{=}13,t{=}3$，那一列平方法用大設定、DP 用標準設定），多數快 90 倍以上，例如 $d{=}11,t{=}4$ 的球 0.15 s（DP 19.9 s）、$d{=}13,t{=}4$ 0.45 s（DP 在相同的大設定下 40.5 s）、$d{=}9,t{=}5$ 0.071 s（DP 347 s）。E2 的子群集合是例外：DP 本身只要 1--40 毫秒，與平方法的集合部分（4--14 毫秒）相當。原因是對這些集合 $\E\cdot\E$ 仍是很小的圖（權重 $\le2t$ 的球或子群本身），而 $P\wedge L$ 只是一次交集。對同一個碼要檢查許多錯誤集合時（例如掃過不同的權重、區域或電路位置），先建一次 $N(S)\setminus S$ 再重複使用是划算的。
+\item \textbf{無結構集合上平方法完全不可用。}E4 的每一列平方法都沒有在時限內完成（600--1,200 秒內未完成或記憶體不足），能確認的都卡在第一步 $\E\cdot\E$，比 DP 更差；顯式列舉仍是最好的選擇。乘法的子問題數是 $\E$ 節點數的平方，當 $\E$ 的圖本身就有數十萬個節點時這已不可行；DP 的代價則只與節點數成線性（乘上像的大小）。
+\item \textbf{記憶體。}$d\le11$ 時平方法在標準設定下的峰值都是 228--229~MB，也就是預先配置的量；DP 是 228--439~MB（E4 與 $d{=}9,t{=}5$ 時節點表會長大）；顯式在大集合上需要 3.1~GB 或分趟。$d\ge13$ 時平方法需要大設定（900~MB 的預先配置），而且節點表與運算快取都要加大（第~\ref{sec:cx} 節）。DP 在 $d{=}13,t{=}4$ 也因大設定而從 193 秒變成 40.5 秒，所以表中凡有標 $^\dagger$ 的，比較時請對照同一設定的數字。
+\item \textbf{何時用哪一種。}（i）同一個碼、許多結構化的錯誤集合：平方法（快取 $N(S)\setminus S$）。（ii）單次查詢、碼較小（$d\lesssim9$）、而 DP 本身就要數秒以上的結構化集合（大的權重球、答案為「有」的球）：平方法較快。（iii）單次查詢且碼較大，或集合是子群／區域：DP。（iv）元素數不多（$\lesssim10^7$）或無結構：顯式；DP 次之；平方法不適用。
+\end{itemize}
+
+%% =====================================================================
+\section{限制與可能的改進}\label{sec:limits}
+
+\begin{itemize}[leftmargin=1.5em]
+\item \textbf{碼的部分沒有快取。}目前每次呼叫 \code{find_inequivalent_pair(..., Square)} 都重建 $N(S)$、$S$ 與 $N(S)\setminus S$。把 $N(S)\setminus S$ 存在 \code{StabilizerCode} 中（第一次使用時建立）就能讓重複查詢只付集合部分；代價是常駐的節點（$d{=}11$ 約 137 萬個、$d{=}13$ 約 800 萬個）。
+\item \textbf{$S$ 的建法可以更便宜。}如第~\ref{sec:ns} 節所述，$N(S)\setminus S=N(S)\cap\bigcup_j(\{\langle v,\bar X_j\rangle=1\}\cup\{\langle v,\bar Z_j\rangle=1\})$，只需在 $N(S)$ 上再做 $2k$ 個奇偶檢查，完全不必建 $S$（$S$ 需要 $2n-r$ 次交集）。第~\ref{sec:variants} 節量了這個寫法。
+\item \textbf{變數順序。}$N(S)$ 與 $S$ 的大小由引理~\ref{lem:width} 的狀態複雜度決定，取決於量子位元的排列。列優先順序對 2D 碼並不是最好的；選擇使最大切寬最小的順序（例如沿較短的方向掃描），可能大幅縮小碼的部分。這裡沒有嘗試。
+\item \textbf{乘法沒有大小保證。}$\E\cdot\E$ 的子問題數是節點數的平方，結果大小也沒有一般上界；無結構的集合上不可用（E4）。乘法的備忘表會讓所有中間結果在整個乘法期間都不能回收，這是 E4 最後一列記憶體不足的原因之一。
+\item \textbf{量測的範圍。}只量了列優先的旋轉表面碼與 $k=1$；每列只跑一次；同一個碼的部分在同一輪的 15 次執行中介於 2.1 與 2.7 秒之間（$d{=}9$）。結論依賴的是數量級的差異。
+\end{itemize}
+
+\end{document}
