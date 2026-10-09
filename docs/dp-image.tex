@@ -17,12 +17,15 @@
 \usepackage{amsmath,amssymb,amsthm}
 \usepackage{booktabs}
 \usepackage{enumitem}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta,positioning}
 \usepackage{float}
 \usepackage{algorithm}
 \usepackage{algpseudocode}
 \usepackage{listings}
 \usepackage[hidelinks]{hyperref}
 
+\newcommand{\tg}[2]{\texttt{#1\,|\,#2}}
 \newcommand{\code}[1]{\texttt{\detokenize{#1}}}
 \renewcommand{\emph}[1]{\textbf{#1}}
 \setlength{\emergencystretch}{3em}
@@ -108,6 +111,172 @@ G(\E)=\pi(\E)=\{(\sigma(e),\lambda(e)):e\in\E\}\subseteq\F_2^{r}\times\F_2^{2k},
 \end{proof}
 
 因此整個判定問題化為\emph{建構 $G(\E)$ 這個 $r+2k$ 個變數上的 BDD}；引理~\ref{lem:bits} 的 $2k$ 個檢驗對所有方法皆相同（程式中 \code{find_inequivalent_pair} 的 multiplicity 迴圈）。以下全部在討論這一步的代價。
+
+%% =====================================================================
+\section{直覺與完整範例：$[[5,1,3]]$ 碼、大小為 5 的錯誤集合}\label{sec:example}
+
+這一節用一個能手算的例子，盡量不用術語，說明整個方法在做什麼。後面的第~\ref{sec:dp} 節只是把這裡的手算過程一般化。
+
+\subsection{要回答的問題，白話版}
+
+量子糾錯碼會對每個錯誤 $e$ 量出兩樣東西：
+\begin{itemize}[leftmargin=1.5em]
+\item \textbf{症狀 $\sigma(e)$}：$e$ 讓哪幾個穩定子「報警」（與它反交換）。解碼器\emph{只看得到}症狀。
+\item \textbf{邏輯特徵 $\lambda(e)$}：$e$ 對被保護的那個邏輯量子位元造成什麼效果（是否翻轉邏輯 $\bar Z$ 與 $\bar X$ 的測量）。解碼器看不到它，但它決定修正對不對。
+\end{itemize}
+如果兩個不同的錯誤 $e_1,e_2$ 症狀相同，解碼器分不出是哪一個；若它們的邏輯特徵又不同，則不論解碼器怎麼猜，總有一種情形猜錯，而且猜錯留下的恰是一個邏輯算符 $e_1e_2$。所以我們要檢查的是：
+
+\begin{center}
+\fbox{\parbox{0.85\textwidth}{\centering 錯誤集合 $\E$ 裡，有沒有兩個錯誤\\\textbf{症狀相同、邏輯特徵不同}？}}
+\end{center}
+
+把每個錯誤的 $(\sigma,\lambda)$ 並排寫成一個「標籤」（tag）。問題就變成：標籤集合裡有沒有兩個標籤，前半（$\sigma$）一樣、後半（$\lambda$）不一樣？
+
+\subsection{$[[5,1,3]]$ 碼與標籤表}
+
+五量子位元碼有 $r=4$ 個穩定子、$k=1$ 個邏輯量子位元，因此標籤是 $4+2=6$ 個位元，寫成 \tg{$\sigma_1\sigma_2\sigma_3\sigma_4$}{$\lambda_1\lambda_2$}。SPBDD 內部把生成元化簡成下面這組（與常見的 $XZZXI$ 等生成同一個群），$\sigma_i$ 依序對應它們；$\lambda=(\langle e,\bar Z\rangle,\langle e,\bar X\rangle)$，邏輯算符代表元也是程式選出的：
+\[
+g_1=XIXZZ,\quad g_2=ZIZYY,\quad g_3=IXZZX,\quad g_4=IZYYZ,\qquad \bar X=IIXYX,\quad \bar Z=IIZXZ .
+\]
+（碼距離 3，$\bar X,\bar Z$ 都是權重 3。）下表是十個單量子位元 Pauli 的標籤，它們就是前面的 $w_v$：
+
+\begin{center}
+\small
+\begin{tabular}{@{}lllll@{}}
+\toprule
+$X_1$ & $Z_1$ & $X_2$ & $Z_2$ & $X_3$\\
+\tg{0100}{00} & \tg{1000}{00} & \tg{0001}{00} & \tg{0010}{00} & \tg{0111}{10}\\
+\midrule
+$Z_3$ & $X_4$ & $Z_4$ & $X_5$ & $Z_5$\\
+\tg{1001}{01} & \tg{1111}{01} & \tg{0101}{11} & \tg{1101}{10} & \tg{0110}{01}\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+關鍵性質：\textbf{標籤是線性的。}一個錯誤的標籤，就是它所含各個單量子位元 Pauli 的標籤逐位元 XOR（$Y=XZ$，所以 $Y_4$ 的標籤是 $X_4$ 與 $Z_4$ 的 XOR）。例如 $Y_4X_5$：
+\[
+\tg{1111}{01}\oplus\tg{0101}{11}\oplus\tg{1101}{10}=\tg{0111}{00}.
+\]
+
+\subsection{錯誤集合與顯式做法}
+
+取大小為 5 的集合
+\[
+\E=\{\,IIIII,\ XIIII,\ IZIII,\ IIXII,\ IIIYX\,\}.
+\]
+逐一算標籤（顯式做法）：
+
+\begin{center}
+\small
+\begin{tabular}{@{}lll@{}}
+\toprule
+錯誤 & 標籤 \tg{$\sigma$}{$\lambda$} & 算法\\
+\midrule
+$IIIII$ & \tg{0000}{00} & 全為 0\\
+$XIIII$ & \tg{0100}{00} & $X_1$\\
+$IZIII$ & \tg{0010}{00} & $Z_2$\\
+$IIXII$ & \tg{0111}{10} & $X_3$\\
+$IIIYX$ & \tg{0111}{00} & $Y_4X_5$（如上）\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+最後兩列的症狀都是 \texttt{0111}，邏輯特徵卻不同（\texttt{10} 對 \texttt{00}）。驗證：$IIXII\cdot IIIYX=IIXYX=\bar X$，的確是一個邏輯算符。所以\textbf{答案是「有不等價對」}，這一對就是 $(IIXII,\ IIIYX)$。函式庫的 DP 與 compose 兩種方法都給出同樣的結論與同一對見證。
+
+五個元素時顯式做法當然最簡單。問題在於真實的錯誤集合（例如所有權重 $\le 4$ 的錯誤）有 $10^8$--$10^9$ 個元素，無法逐一列出；決策圖只用幾百到幾千個節點就能「壓縮地」存下整個集合。DP 的目的就是\emph{不展開集合，直接在壓縮表示上算出標籤集合}。
+
+\subsection{決策圖長什麼樣}
+
+決策圖（BDD）把集合表示成一張「問答圖」：依固定順序（$X_1,Z_1,X_2,Z_2,\dots$）逐一問每個變數「這個單量子位元 Pauli 有沒有出現在錯誤裡？」虛線表示答「沒有」（取 0），實線表示答「有」（取 1）。從根節點走到 $\top$ 的每一條路徑就是集合中的一個元素。（走到 $\bot$ 的路徑不屬於集合。）
+
+我們的 $\E$ 在真正的 BDD 裡有 19 個節點，但其中很多節點只是「這個變數必須為 0」的傳遞。把它們省略（它們不改變下面算出的標籤）後，只剩 6 個真正有分岔的節點，圖~\ref{fig:bdd} 畫的就是它們；每條路徑對應一個元素：
+
+\begin{center}
+\small
+\begin{tabular}{@{}ll@{}}
+\toprule
+路徑 & 元素\\
+\midrule
+一路選虛線 & $IIIII$\\
+在 $X_1$ 選實線，其餘為 0 & $XIIII$\\
+在 $Z_2$ 選實線 & $IZIII$\\
+在 $X_3$ 選實線 & $IIXII$\\
+在 $X_4$、$Z_4$、$X_5$ 都選實線 & $IIIYX$\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\begin{figure}[ht]
+\centering
+\begin{tikzpicture}[
+  node distance=1.25cm,
+  dec/.style={circle,draw,minimum size=8mm,inner sep=0pt},
+  term/.style={rectangle,draw,rounded corners,minimum height=6.5mm,inner sep=3pt,font=\small},
+  img/.style={anchor=east,font=\small},
+  zero/.style={-{Stealth},dashed},
+  one/.style={-{Stealth}}]
+  \node[dec] (r) at (0,0)    {$X_1$};
+  \node[dec] (a) at (0,-1.6) {$Z_2$};
+  \node[dec] (b) at (0,-3.2) {$X_3$};
+  \node[dec] (c) at (0,-4.8) {$X_4$};
+  \node[dec] (d) at (0,-6.4) {$Z_4$};
+  \node[dec] (e) at (0,-8.0) {$X_5$};
+  \node[term] (t) at (0,-9.6) {$\top$：$\{\tg{0000}{00}\}$};
+  \node[term] (t1) at (3.6,0)    {其餘全 0 $\to\top$};
+  \node[term] (t2) at (3.6,-1.6) {其餘全 0 $\to\top$};
+  \node[term] (t3) at (3.6,-3.2) {其餘全 0 $\to\top$};
+  \node[term] (t4) at (3.6,-4.8) {其餘全 0 $\to\top$};
+  \node[term] (f1) at (3.6,-6.4) {$\bot$};
+  \node[term] (f2) at (3.6,-8.0) {$\bot$};
+  \draw[zero] (r) -- (a); \draw[one] (r) -- (t1);
+  \draw[zero] (a) -- (b); \draw[one] (a) -- (t2);
+  \draw[zero] (b) -- (c); \draw[one] (b) -- (t3);
+  \draw[zero] (c) -- (t4); \draw[one] (c) -- (d);
+  \draw[zero] (d) -- (f1); \draw[one] (d) -- (e);
+  \draw[zero] (e) -- (f2); \draw[one] (e) -- (t);
+  \node[img] at (-0.7,0)    {$I=\{\tg{0000}{00},\tg{0100}{00},\tg{0010}{00},\tg{0111}{00},\tg{0111}{10}\}$};
+  \node[img] at (-0.7,-1.6) {$I=\{\tg{0000}{00},\tg{0010}{00},\tg{0111}{00},\tg{0111}{10}\}$};
+  \node[img] at (-0.7,-3.2) {$I=\{\tg{0000}{00},\tg{0111}{00},\tg{0111}{10}\}$};
+  \node[img] at (-0.7,-4.8) {$I=\{\tg{0000}{00},\tg{0111}{00}\}$};
+  \node[img] at (-0.7,-6.4) {$I=\{\tg{1000}{01}\}$};
+  \node[img] at (-0.7,-8.0) {$I=\{\tg{1101}{10}\}$};
+\end{tikzpicture}
+\caption{$\E$ 的（省略「必須為 0」節點後的）決策圖。虛線＝取 0，實線＝取 1。每個節點左邊的 $I$ 是「從這個節點往下走，能累積出的所有標籤」，由下往上依序算出（見下一小節）。}\label{fig:bdd}
+\end{figure}
+
+\subsection{DP：由下往上，每個節點只做一件事}
+
+對每個節點 $u$，我們想知道它的\textbf{後綴像} $I(u)$：「從 $u$ 往下走到 $\top$ 的所有路徑，沿途經過的實線所對應的單量子位元 Pauli，其標籤 XOR 起來，可能是哪些值？」這就是 $u$ 以下所有元素的標籤集合。計算只有一條規則：
+
+\begin{center}
+\fbox{\parbox{0.9\textwidth}{\centering
+$I(u)\;=\;\underbrace{I(\text{虛線的子節點})}_{\text{這個變數沒選：標籤不變}}\ \cup\ \underbrace{\bigl(w_v\oplus I(\text{實線的子節點})\bigr)}_{\text{這個變數選了：每個標籤都再 XOR 上 }w_v}$}}
+\end{center}
+其中 $w_v$ 是表中該變數的標籤；$\bot$ 的像是空集合，$\top$ 的像是 $\{\tg{0000}{00}\}$（什麼都沒選，標籤為零）。
+
+照著圖由下往上算：
+\begin{enumerate}[leftmargin=2em]
+\item $X_5$ 節點：虛線通向 $\bot$（空集合），實線通向 $\top$。$I=\varnothing\cup(\tg{1101}{10}\oplus\{\tg{0000}{00}\})=\{\tg{1101}{10}\}$。
+\item $Z_4$ 節點：虛線 $\bot$；實線通向上一步。$I=\tg{0101}{11}\oplus\{\tg{1101}{10}\}=\{\tg{1000}{01}\}$。
+\item $X_4$ 節點：虛線通向「其餘全 0」，像是 $\{\tg{0000}{00}\}$；實線通向上一步。$I=\{\tg{0000}{00}\}\cup\bigl(\tg{1111}{01}\oplus\tg{1000}{01}\bigr)=\{\tg{0000}{00},\tg{0111}{00}\}$。（這正是 $IIIII$ 與 $IIIYX$ 兩個後綴的標籤。）
+\item $X_3$ 節點：虛線通向上一步，實線通向「其餘全 0」。$I=\{\tg{0000}{00},\tg{0111}{00}\}\cup\{\tg{0111}{10}\}$。\textbf{這裡兩個標籤 \tg{0111}{00} 與 \tg{0111}{10} 第一次同時出現：症狀相同、邏輯特徵不同。}
+\item $Z_2$ 節點：$I=(\text{上一步})\cup\{\tg{0010}{00}\}$。
+\item $X_1$ 節點（根）：$I=(\text{上一步})\cup\{\tg{0100}{00}\}$，也就是五個元素的完整標籤集合 $G$。
+\end{enumerate}
+這個流程與表中直接算的結果完全一致，並且與函式庫對這張真實的 19 節點決策圖逐節點算出的像一致。
+
+\subsection{最後一步：檢查「症狀相同、特徵不同」}
+
+得到 $G=\{\tg{0000}{00},\tg{0100}{00},\tg{0010}{00},\tg{0111}{00},\tg{0111}{10}\}$ 後，對每個特徵位元 $\lambda_j$ 檢查：有沒有某個症狀 $\sigma$，既出現在「$\lambda_j=0$ 的標籤」中、也出現在「$\lambda_j=1$ 的標籤」中（引理~\ref{lem:bits}）。對 $\lambda_1$：$\lambda_1=0$ 的標籤其症狀為 \texttt{0000, 0100, 0010, 0111}；$\lambda_1=1$ 的標籤只有 \texttt{0111}。交集是 $\{\texttt{0111}\}\neq\varnothing$，故有不等價對。最後用症狀 \texttt{0111} 回到原集合取元素：$\E\cap\{\text{症狀為 }\texttt{0111}\}=\{IIXII,\,IIIYX\}$，就是見證。
+
+若把 $IIIYX$ 換成 $IIIIX$（標籤 \tg{1101}{10}，症狀 \texttt{1101} 不與其他元素重複），則 $G$ 的五個症狀兩兩不同，檢查不成立，答案為「無不等價對」。
+
+\subsection{這個例子想說明的}
+\begin{itemize}[leftmargin=1.5em]
+\item 「位移」$w_v\oplus I(\cdot)$ 只是把集合裡每個標籤的某幾個位元翻轉；在決策圖上，這是重新標號，不會讓圖變大（第~\ref{sec:shift} 節）。
+\item 每個節點只算一次，不論有多少條路徑經過它。五個元素時看不出差別；當集合有 $10^9$ 個元素而圖只有一千個節點時，DP 做的就只是約一千次「聯集＋位移」。
+\item 這張圖上每個節點的 $I$ 都很小；在大集合上，$I$ 是否仍然小（結構是否保持）決定 DP 的成本，這是第~\ref{sec:complexity} 節的複雜度分析與第~\ref{sec:meas} 節量測在討論的事。
+\end{itemize}
 
 %% =====================================================================
 \section{Compose 方法（參考實作）}\label{sec:compose}
