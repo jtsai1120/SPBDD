@@ -265,6 +265,71 @@ $I(u)\;=\;\underbrace{I(\text{虛線的子節點})}_{\text{這個變數沒選：
 \end{enumerate}
 這個流程與表中直接算的結果完全一致，並且與函式庫對這張真實的 19 節點決策圖逐節點算出的像一致。
 
+\subsection{$I$ 實際上怎麼存？為什麼強調「位移只是重新標號」}\label{sec:store}
+
+\paragraph{$I$ 存成一個新的 BDD。}是的。圖~\ref{fig:bdd} 每個節點旁邊寫的 $I$ 看起來像「一堆標籤的清單」，實際上程式\emph{不}存清單：$I(u)$ 是標籤的 6 個位元 $(y_1,\dots,y_6)=(\sigma_1,\dots,\sigma_4,\lambda_1,\lambda_2)$ 上的一個布林函數「$y\in I(u)$ 嗎？」，以一個\emph{新的、獨立的 BDD} 存在同一個 BuDDy 管理器裡（程式中就是 \code{b}、\code{c}、\code{f} 這幾組變數）。輸入集合 $\E$ 的 BDD 在整個過程中只被讀取、不被修改；DP 每處理一個節點，就產生一個新的標籤 BDD，並用一個 \code{Bdd} 把手（引用計數的指標）記在該節點名下。例如節點 $X_5$ 的 $I=\{\tg{1101}{10}\}$ 只有一個點，它的 BDD 就是 6 個節點的一條鏈（每個變數一個節點，答案固定）。真實的大例子中 $I$ 可以是數億個標籤的集合，但只要結構規則，它的 BDD 只有幾千到幾十萬個節點——這就是不展開、直接在壓縮表示上算的意思。
+
+\paragraph{DP 對 $I$ 做的兩件事。}由 $I(u)=I(\text{虛線子節點})\cup\bigl(w_v\oplus I(\text{實線子節點})\bigr)$，每個節點對標籤 BDD 做一次「位移」與一次「聯集」：
+\begin{itemize}[leftmargin=1.5em]
+\item \textbf{聯集}是普通的 BDD 運算（apply 的 OR）。它的結果可能比兩個輸入都大（最壞約為兩者節點數的乘積），所以\emph{這是 DP 中唯一可能讓圖變大的步驟}。
+\item \textbf{位移} $w\oplus F$ 把集合中\emph{每一個}標籤的某幾個位元翻轉（$w$ 在哪些位置是 1，就翻轉哪些位置）。直覺上這會改變整個集合；但在 BDD 上它只是：\textbf{把標籤為被翻轉變數的節點，兩個子節點對調}（圖~\ref{fig:shift}）。節點數完全不變，只需掃一遍圖。
+\end{itemize}
+
+\begin{figure}[ht]
+\centering
+\begin{tikzpicture}[
+  dec/.style={circle,draw,minimum size=7mm,inner sep=0pt,font=\small},
+  term/.style={rectangle,draw,minimum size=5mm,inner sep=1pt,font=\footnotesize},
+  zero/.style={-{Stealth},dashed},
+  one/.style={-{Stealth}}]
+  % left: F = {000, 011}
+  \begin{scope}
+    \node[dec] (y1) at (0,0) {$y_1$};
+    \node[dec] (y2) at (0,-1.4) {$y_2$};
+    \node[dec] (a) at (-1.4,-2.8) {$y_3$};
+    \node[dec] (b) at (1.4,-2.8) {$y_3$};
+    \node[term] (f0) at (1.2,0) {$\bot$};
+    \node[term] (at) at (-2.0,-4.1) {$\top$};
+    \node[term] (af) at (-0.8,-4.1) {$\bot$};
+    \node[term] (bf) at (0.8,-4.1) {$\bot$};
+    \node[term] (bt) at (2.0,-4.1) {$\top$};
+    \draw[zero] (y1)--(y2); \draw[one] (y1)--(f0);
+    \draw[zero] (y2)--(a);  \draw[one] (y2)--(b);
+    \draw[zero] (a)--(at);  \draw[one] (a)--(af);
+    \draw[zero] (b)--(bf);  \draw[one] (b)--(bt);
+    \node at (0,-5.0) {$F=\{000,\ 011\}$};
+  \end{scope}
+  \draw[-{Stealth},thick] (3.1,-2.0) -- node[above,font=\small]{翻轉 $y_2$} node[below,font=\small]{$w=010$} (4.9,-2.0);
+  % right: w xor F = {010, 001}: children of the y2 node swapped
+  \begin{scope}[xshift=8cm]
+    \node[dec] (y1) at (0,0) {$y_1$};
+    \node[dec] (y2) at (0,-1.4) {$y_2$};
+    \node[dec] (a) at (-1.4,-2.8) {$y_3$};
+    \node[dec] (b) at (1.4,-2.8) {$y_3$};
+    \node[term] (f0) at (1.2,0) {$\bot$};
+    \node[term] (at) at (-2.0,-4.1) {$\top$};
+    \node[term] (af) at (-0.8,-4.1) {$\bot$};
+    \node[term] (bf) at (0.8,-4.1) {$\bot$};
+    \node[term] (bt) at (2.0,-4.1) {$\top$};
+    \draw[zero] (y1)--(y2); \draw[one] (y1)--(f0);
+    \draw[zero] (y2)--(b);  \draw[one] (y2)--(a);
+    \draw[zero] (a)--(at);  \draw[one] (a)--(af);
+    \draw[zero] (b)--(bf);  \draw[one] (b)--(bt);
+    \node at (0,-5.0) {$w\oplus F=\{010,\ 001\}$};
+  \end{scope}
+\end{tikzpicture}
+\caption{位移 $w\oplus F$ 在 BDD 上的樣子（虛線＝取 0，實線＝取 1）：翻轉 $y_2$ 就是把 $y_2$ 節點的兩個子節點對調，其餘節點與邊完全不動，節點數不變。}\label{fig:shift}
+\end{figure}
+
+\paragraph{為什麼要特別強調這一點。}因為這正是 DP 能避開 compose 方法的瓶頸之處。
+\begin{itemize}[leftmargin=1.5em]
+\item compose 方法要把 BDD 的每個變數代換成\emph{其他變數的 XOR}（例如 $y_i:=x_i\oplus y_i$）。在 BDD 上這可能讓圖大指數倍（第~\ref{sec:compose} 節的例子：$n+2$ 個節點的函數變成至少 $2^n$ 個節點）。代價取決於「代換後的結果有多大」，事先無法控制。
+\item DP 把同一件事換了一個角度：不去改寫輸入集合的變數，而是讓「錯誤的標籤是各單量子位元標籤的 XOR」這個線性性，變成對標籤集合的\emph{常數位移}。位移在 BDD 上是對調子節點，\emph{保證不增加節點數}。
+\item 於是 DP 中每個節點只剩一個可能造成成長的運算——聯集，而且聯集的輸入都是「某個後綴的標籤集合」，它們通常比 compose 在 $2n$ 個變數上產生的中間圖小得多。DP 的成本因此只取決於各節點的 $I$ 有多大（第~\ref{sec:complexity} 節）。
+\end{itemize}
+
+\paragraph{實作上的小註記。}程式用 \code{Bdd::compose} 把每個被翻轉的變數 $y_t$ 代換成它自己的否定 $\neg y_t$ 來做位移，這在數學上等同於對調子節點（結果大小一樣）；但 BuDDy 的向量代換（\code{bdd_veccompose}）實作上不保證是線性時間，所以文件只宣稱「位移的結果大小不變」，執行時間只宣稱是圖大小的多項式。
+
 \subsection{最後一步：檢查「症狀相同、特徵不同」}
 
 得到 $G=\{\tg{0000}{00},\tg{0100}{00},\tg{0010}{00},\tg{0111}{00},\tg{0111}{10}\}$ 後，對每個特徵位元 $\lambda_j$ 檢查：有沒有某個症狀 $\sigma$，既出現在「$\lambda_j=0$ 的標籤」中、也出現在「$\lambda_j=1$ 的標籤」中（引理~\ref{lem:bits}）。對 $\lambda_1$：$\lambda_1=0$ 的標籤其症狀為 \texttt{0000, 0100, 0010, 0111}；$\lambda_1=1$ 的標籤只有 \texttt{0111}。交集是 $\{\texttt{0111}\}\neq\varnothing$，故有不等價對。最後用症狀 \texttt{0111} 回到原集合取元素：$\E\cap\{\text{症狀為 }\texttt{0111}\}=\{IIXII,\,IIIYX\}$，就是見證。
